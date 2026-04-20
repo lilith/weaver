@@ -29,6 +29,7 @@ import type { Doc, Id } from "./_generated/dataModel.js";
 import { readJSONBlob } from "./blobs.js";
 import { loadNpcMemory } from "./npc_memory.js";
 import { isFeatureEnabled } from "./flags.js";
+import { currentEraFor, getEntityAtEra, isVisibleAtEra } from "./eras.js";
 
 type AssemblyCtx = {
   db: {
@@ -63,6 +64,10 @@ export type AssembleArgs = {
   character_id?: Id<"characters">; // the player's character (perspective)
   location_entity_id?: Id<"entities">; // current location — for biome lookup
   extra_context?: string;
+  // Era-v2 override. When omitted the assembler derives the era from
+  // character.personal_era (or world.active_era). Explicit caller
+  // value wins — useful for chronicle generation on the era boundary.
+  era?: number;
 };
 
 export async function assembleNarrativePrompt(
@@ -75,31 +80,44 @@ export async function assembleNarrativePrompt(
   }
   const branch_id = world.current_branch_id;
   const activeEra = world.active_era ?? 1;
+  // The era through which the prompt should be filtered — defaults to
+  // character.personal_era when lagging, otherwise world.active_era.
+  // Callers can override with args.era if they want a specific snapshot
+  // (e.g., chronicle generation at era boundary).
+  const viewEra =
+    args.era ??
+    (args.character_id
+      ? await currentEraFor(ctx, args.world_id, args.character_id)
+      : activeEra);
 
-  // Bible — cacheable prefix.
+  // Bible — cacheable prefix. Read at viewEra so era rewrites surface.
   const bibleEntity = await ctx.db
     .query("entities")
     .withIndex("by_branch_type_slug", (q: any) =>
       q.eq("branch_id", branch_id).eq("type", "bible").eq("slug", "bible"),
     )
     .first();
-  const bible = bibleEntity ? await readEntityPayload<any>(ctx, bibleEntity) : null;
+  const bible = bibleEntity
+    ? await getEntityAtEra<any>(ctx, bibleEntity, viewEra)
+    : null;
 
-  // Speaker (if given) — must be in this world.
+  // Speaker (if given) — must be in this world AND era-visible, i.e.
+  // their era_first_established <= viewEra. Keeps era-N characters
+  // from narrating era-1 scenes (or vice versa).
   let speaker: any = null;
   if (args.speaker_entity_id) {
     const e = (await ctx.db.get(args.speaker_entity_id)) as Doc<"entities"> | null;
-    if (e && e.world_id === args.world_id) {
-      speaker = await readEntityPayload<any>(ctx, e);
+    if (e && e.world_id === args.world_id && isVisibleAtEra(e, viewEra)) {
+      speaker = await getEntityAtEra<any>(ctx, e, viewEra);
     }
   }
 
-  // Biome — from current location if given.
+  // Biome — from current location if given. Era-filtered identically.
   let biome: any = null;
   if (args.location_entity_id) {
     const loc = (await ctx.db.get(args.location_entity_id)) as Doc<"entities"> | null;
-    if (loc && loc.world_id === args.world_id) {
-      const locPayload = await readEntityPayload<any>(ctx, loc);
+    if (loc && loc.world_id === args.world_id && isVisibleAtEra(loc, viewEra)) {
+      const locPayload = await getEntityAtEra<any>(ctx, loc, viewEra);
       const biomeSlug = locPayload?.biome;
       if (biomeSlug) {
         const biomeEntity = await ctx.db
@@ -108,8 +126,8 @@ export async function assembleNarrativePrompt(
             q.eq("branch_id", branch_id).eq("type", "biome").eq("slug", biomeSlug),
           )
           .first();
-        if (biomeEntity) {
-          biome = await readEntityPayload<any>(ctx, biomeEntity);
+        if (biomeEntity && isVisibleAtEra(biomeEntity, viewEra)) {
+          biome = await getEntityAtEra<any>(ctx, biomeEntity, viewEra);
         }
       }
     }
@@ -153,13 +171,13 @@ export async function assembleNarrativePrompt(
 
   // Spatial context — if a location is provided, pull its neighbors +
   // one-sentence summaries so expansion/narrate has the local geography
-  // on hand. Avoids hallucinating a "path back to village" when the
-  // actual neighbor is "apothecary."
+  // on hand. Neighbors are era-filtered so we don't mention places
+  // that shouldn't exist yet in this character's view.
   let neighborSummaries: string[] = [];
   if (args.location_entity_id) {
     const loc = (await ctx.db.get(args.location_entity_id)) as Doc<"entities"> | null;
     if (loc && loc.world_id === args.world_id) {
-      const locPayload = await readEntityPayload<any>(ctx, loc);
+      const locPayload = await getEntityAtEra<any>(ctx, loc, viewEra);
       const neighbors = (locPayload?.neighbors ?? {}) as Record<string, string>;
       const neighborSlugs = Object.values(neighbors).slice(0, 6);
       for (const nslug of neighborSlugs) {
@@ -169,8 +187,8 @@ export async function assembleNarrativePrompt(
             q.eq("branch_id", branch_id).eq("type", "location").eq("slug", nslug),
           )
           .first();
-        if (!ne) continue;
-        const np = await readEntityPayload<any>(ctx, ne);
+        if (!ne || !isVisibleAtEra(ne, viewEra)) continue;
+        const np = await getEntityAtEra<any>(ctx, ne, viewEra);
         if (!np) continue;
         const short = String(
           np.description_template ?? np.prose ?? np.description ?? "",
@@ -283,6 +301,9 @@ export async function assembleNarrativePrompt(
   // right turning points.
   {
     const lines: string[] = [`active_era: ${activeEra}`];
+    if (viewEra !== activeEra) {
+      lines.push(`view_era: ${viewEra} (caller lags the world)`);
+    }
     if (chronicleSummary.length > 0) {
       lines.push("chronicles (most recent first):");
       for (const c of [...chronicleSummary].reverse()) lines.push(`  ${c}`);
@@ -437,6 +458,7 @@ export const buildPrompt = internalQuery({
     character_id: v.optional(v.id("characters")),
     location_entity_id: v.optional(v.id("entities")),
     extra_context: v.optional(v.string()),
+    era: v.optional(v.number()),
   },
   handler: async (ctx, args) => assembleNarrativePrompt(ctx as any, args),
 });

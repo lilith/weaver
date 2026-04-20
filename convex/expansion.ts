@@ -19,6 +19,7 @@ import { isFeatureEnabled } from "./flags.js";
 import { logBugs } from "./diagnostics.js";
 import { sanitizeLocationPayload } from "@weaver/engine/diagnostics";
 import { anthropicCostUsd } from "./cost.js";
+import { stampEraOnCreate } from "./eras.js";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 2048;
@@ -518,6 +519,7 @@ export const insertExpandedLocation = internalMutation({
       )
       .first();
 
+    const eraAtCreate = await stampEraOnCreate(ctx, world_id);
     const entityId = await ctx.db.insert("entities", {
       world_id,
       branch_id,
@@ -535,6 +537,7 @@ export const insertExpandedLocation = internalMutation({
       prefetched_from_option_label:
         effectiveMode === "prefetch" ? prefetched_from_option_label : undefined,
       visited_at: effectiveMode === "prefetch" ? undefined : now,
+      era_first_established: eraAtCreate,
       created_at: now,
       updated_at: now,
     });
@@ -549,6 +552,7 @@ export const insertExpandedLocation = internalMutation({
       author_pseudonym: user.display_name ?? user.email,
       edit_kind: "create",
       reason: effectiveMode === "prefetch" ? "prefetch" : "expansion",
+      era: eraAtCreate,
       created_at: now,
     });
 

@@ -15,6 +15,7 @@ import { sanitizeLocationPayload } from "@weaver/engine/diagnostics";
 import { logBugs } from "./diagnostics.js";
 import { appendMentorship } from "./mentorship.js";
 import { anthropicCostUsd } from "./cost.js";
+import { stampEraOnCreate } from "./eras.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Id } from "./_generated/dataModel.js";
 
@@ -243,6 +244,7 @@ export const applyEntityEdit = mutation({
     } catch {}
     const hash = await writeJSONBlob(ctx, payload);
     const nextV = entity.current_version + 1;
+    const eraAtEdit = await stampEraOnCreate(ctx, world._id);
     await ctx.db.insert("artifact_versions", {
       world_id: world._id,
       branch_id: world.current_branch_id,
@@ -254,6 +256,7 @@ export const applyEntityEdit = mutation({
       author_pseudonym: user.display_name ?? "author",
       edit_kind: `${t}_prompt_edit`,
       reason: reason ?? "ai-suggested edit approved",
+      era: eraAtEdit,
       created_at: Date.now(),
     });
     await ctx.db.patch(entity._id, {

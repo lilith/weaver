@@ -125,6 +125,13 @@ export default defineSchema({
     // entities older than 30 days. Canonical (non-draft) entities get
     // this set once on first author-resolve.
     visited_at: v.optional(v.number()),
+    // Eras v2 (spec 25). Era number when this entity first appeared in
+    // the world — stamped from worlds.active_era at creation time.
+    // Absent = unconstrained (treated as era 1). Used by
+    // currentEraFor() / narrative prompt filtering so Opus doesn't
+    // reference entities that shouldn't exist yet in the player's
+    // personal_era view.
+    era_first_established: v.optional(v.number()),
     // If this entity is a prefetched draft, records the parent location
     // and the option label that triggered it — so applyOption can find
     // the pre-warmed draft instead of chaining to expansion.
@@ -341,10 +348,16 @@ export default defineSchema({
     author_pseudonym: v.optional(v.string()),
     edit_kind: v.string(),
     reason: v.optional(v.string()),
+    // Eras v2 — era the world was in when this version was written.
+    // Enables per-era rewrites: a location can have era-2 and era-3
+    // versions and getEntityAtEra() picks the latest <= target era.
+    // Absent on legacy rows → treated as era 1.
+    era: v.optional(v.number()),
     created_at: v.number(),
   })
     .index("by_artifact_version", ["artifact_entity_id", "version"])
-    .index("by_branch_blob", ["branch_id", "blob_hash"]),
+    .index("by_branch_blob", ["branch_id", "blob_hash"])
+    .index("by_artifact_era", ["artifact_entity_id", "era"]),
 
   // ---------------------------------------------------------------
   // Journeys — a run of draft locations between two canonical stops.

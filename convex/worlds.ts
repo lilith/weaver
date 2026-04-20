@@ -755,6 +755,7 @@ export const applyBibleEdit = mutation({
       author_pseudonym: user.display_name ?? "author",
       edit_kind: "bible_feedback",
       reason: reason ?? "ai-suggested edit approved",
+      era: world.active_era ?? 1,
       created_at: Date.now(),
     });
     await ctx.db.patch(bibleEntity._id, {

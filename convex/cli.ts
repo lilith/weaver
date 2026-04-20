@@ -26,6 +26,7 @@ import {
 import { scheduleArtForEntity } from "./art.js";
 import { sanitizeLocationPayload } from "@weaver/engine/diagnostics";
 import { logBugs } from "./diagnostics.js";
+import { stampEraOnCreate } from "./eras.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 // --------------------------------------------------------------------
@@ -901,6 +902,7 @@ export const pushEntityPayload = mutation({
           .eq("slug", slug),
       )
       .first()) as Doc<"entities"> | null;
+    const eraAtCreate = await stampEraOnCreate(ctx, world._id);
     if (!entity) {
       // Create brand-new entity — the push-is-create path. Author as
       // caller. Useful for agents authoring new content into an
@@ -917,6 +919,7 @@ export const pushEntityPayload = mutation({
         schema_version: 1,
         author_user_id: user_id,
         author_pseudonym: pseudonym,
+        era_first_established: eraAtCreate,
         created_at: now,
         updated_at: now,
       });
@@ -931,6 +934,7 @@ export const pushEntityPayload = mutation({
         author_pseudonym: pseudonym,
         edit_kind: "create_via_push",
         reason: reason ?? "cli push create",
+        era: eraAtCreate,
         created_at: now,
       });
       return { created: true, entity_id: id, version: 1 };
@@ -947,6 +951,7 @@ export const pushEntityPayload = mutation({
       content_type: "application/json",
       author_user_id: user_id,
       author_pseudonym: pseudonym,
+      era: eraAtCreate,
       edit_kind: "replace_via_push",
       reason: reason ?? "cli push",
       created_at: Date.now(),
