@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as blobs from "../blobs.js";
 import type * as characters from "../characters.js";
 import type * as expansion from "../expansion.js";
+import type * as import_ from "../import.js";
 import type * as locations from "../locations.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   blobs: typeof blobs;
   characters: typeof characters;
   expansion: typeof expansion;
+  import: typeof import_;
   locations: typeof locations;
   seed: typeof seed;
   sessions: typeof sessions;
