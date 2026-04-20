@@ -24,7 +24,12 @@
 						<div>
 							<div class="font-display text-xl text-mist-100">{world.name}</div>
 							<div class="text-xs uppercase tracking-wide text-mist-600">
-								{world.role} · {world.slug}
+								{world.role} ·
+								{world.location_count ?? 0}
+								{(world.location_count ?? 0) === 1 ? 'place' : 'places'}
+								{#if world.visited_count}
+									· {world.visited_count} visited
+								{/if}
 							</div>
 						</div>
 						<span

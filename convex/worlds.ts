@@ -17,13 +17,53 @@ export const listMine = query({
     const worlds = [];
     for (const m of memberships) {
       const w = await ctx.db.get(m.world_id);
-      if (!w) continue;
+      if (!w || !w.current_branch_id) continue;
+
+      // Count canonical (non-draft) locations in this world's current branch.
+      const locations = await ctx.db
+        .query("entities")
+        .withIndex("by_branch_type", (q) =>
+          q.eq("branch_id", w.current_branch_id!).eq("type", "location"),
+        )
+        .collect();
+      const canonicalLocations = locations.filter(
+        (e) => (e as any).draft !== true,
+      );
+      const location_count = canonicalLocations.length;
+
+      // Count how many of those this user has stepped into. We live-store
+      // per-visit counters under character.state.this[slug].visited, so
+      // this is a sum over the character's state.
+      const character = await ctx.db
+        .query("characters")
+        .withIndex("by_world_user", (q) =>
+          q.eq("world_id", w._id).eq("user_id", user_id),
+        )
+        .first();
+      let visited_count = 0;
+      if (character?.state && typeof character.state === "object") {
+        const thisScope = (character.state as any).this ?? {};
+        for (const slug of Object.keys(thisScope)) {
+          const visitEntry = thisScope[slug];
+          if (
+            visitEntry &&
+            typeof visitEntry === "object" &&
+            typeof visitEntry.visited === "number" &&
+            visitEntry.visited > 0
+          ) {
+            visited_count++;
+          }
+        }
+      }
+
       worlds.push({
         _id: w._id,
         name: w.name,
         slug: w.slug,
         current_branch_id: w.current_branch_id,
         role: m.role,
+        location_count,
+        visited_count,
       });
     }
     worlds.sort((a, b) => a.name.localeCompare(b.name));
