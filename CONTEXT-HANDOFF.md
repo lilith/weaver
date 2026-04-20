@@ -1,8 +1,33 @@
 # Weaver — Session Handoff
 
-*Written 2026-04-19. Update when state changes. Read this first; then `spec/`.*
+*Started 2026-04-19; last updated 2026-04-20. Read this first; then
+`spec/LIMITATIONS_AND_GOTCHAS.md`; then CLAUDE.md URGENT block; then
+the rest of `spec/`.*
 
-This file is a snapshot of everything provisioned, wired, decided, and explicitly deferred in the Weaver setup session. It exists so a later session (or a reviewer) can pick up without re-discovering state or second-guessing decisions that were deliberate.
+This file is a snapshot of everything provisioned, wired, decided, and
+explicitly deferred. Session-end-reload entry point.
+
+## Fast-read for the next session
+
+1. **`CLAUDE.md`** — standing rules, URGENT-block with applied/pending
+   status per course-correction, Wave 2 POSTER_CHILD ask statuses.
+2. **`spec/LIMITATIONS_AND_GOTCHAS.md`** — 35+ Convex / SvelteKit /
+   Cloudflare / fal.ai / ESM / env-var reality checks from actual
+   build. Each one would cost ~15 min to rediscover. Scan first.
+3. **`UX_PROPOSALS.md`** — 5 open design questions with leanings but
+   not-my-decisions, from Ask 3 / Ask 5 work. Wave-2 review.
+4. **`spec/20_POSTER_CHILD_CAPABILITIES.md`** — five Wave-2 asks
+   overview table + links to specs 21–24. Ask 3 + Ask 5 shipped;
+   1, 2, 4 pending.
+5. **`backstory/IMPORT_CONTRACT.md`** — what the data-authoring agent
+   produces. `backstory/POSTER_CHILD.md` is the parallel "why" doc.
+
+## Latest commit: `3a51b35` (main, Cloudflare Pages auto-deploy-on-push)
+
+Prod live at https://theweaver.quest. Five accounts in household all
+pre-authed on **The Quiet Vale** (`quiet-vale-f96pf4`, 20+ locations)
+and **The Office** (`the-office`, 43 entities from Argus extraction,
+23 FLUX arts queued).
 
 ---
 
