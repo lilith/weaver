@@ -123,8 +123,14 @@ export default defineSchema({
   users: defineTable({
     email: v.string(),
     display_name: v.optional(v.string()),
+    is_minor: v.boolean(),                            // set by inviter
+    guardian_user_ids: v.array(v.id("users")),        // may be empty for adults
+    per_day_cost_cap_usd: v.optional(v.number()),     // null = uncapped (adults); minors default ~$1
     created_at: v.number(),
   }).index("by_email", ["email"]),
+  // See 16_PRIVACY_AND_MINORS.md for semantics. is_minor / guardian_user_ids
+  // are metadata-only in Wave 1 (no UI surfaces around them); they exist in
+  // the schema so downstream features can land without a migration.
 
   // Worlds + branches
   worlds: defineTable({

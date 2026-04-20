@@ -184,7 +184,7 @@ PR fails if:
 Accumulated recorded player sessions. Each session is a list of (user_input, timestamp, expected_resulting_state_hash, expected_rendered_output_hash). Sessions come from:
 
 - **Synthetic corpus** — hand-crafted in test/corpus/synthetic/, used to codify expected behavior.
-- **Anonymized production corpus** — recorded sessions from closed-beta family, anonymized (pseudonyms replaced with placeholders, character details neutralized).
+- **Family-internal production corpus** — recorded sessions from the family instance. Stays on-instance; no cross-family sharing. Anonymization was part of the earlier public-worlds story and is not a Wave 1 requirement — see `16_PRIVACY_AND_MINORS.md`.
 
 ### What it tests
 

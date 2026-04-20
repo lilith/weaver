@@ -248,6 +248,19 @@ These tasks run concurrently. Each agent gets one.
 **Files:** `apps/play/src/routes/auth/*`, `convex/auth/*`.
 **Effort:** 1 day.
 
+#### C6. Family-rating safety prompts + per-user cost cap
+
+**Depends on:** A1, A3, B1.
+**Deliverable:** The small safety surface that the per-family-instance posture requires. See `16_PRIVACY_AND_MINORS.md`.
+**Acceptance:**
+- Every LLM narrative/expansion/dialogue call has the family-rating guidance prepended to its system prompt when the world's rating is `family`.
+- Every fal.ai image-gen call appends the safety suffix when rating is `family`.
+- `users.per_day_cost_cap_usd` enforced in the cost-ledger mutation: reject AI calls for a user over their cap, return a friendly "take a break" message.
+- `users.is_minor` + `users.guardian_user_ids` fields present in the schema, even if no UI reads them in Wave 1.
+**Files:** `packages/engine/ai/anthropic.ts`, `packages/engine/ai/fal.ts`, `convex/costLedger/*`, schema.
+**Effort:** ~2 hours (was 2 days in the original C6 scope before per-family-instance simplification).
+**Owner:** agent, as part of whichever Phase B/C task they're already in.
+
 ### Phase D — Deploy + closed beta (week 4, you + 1 agent)
 
 #### D1. Deploy pipeline + auto-rollback

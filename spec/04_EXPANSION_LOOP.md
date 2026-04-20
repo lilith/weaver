@@ -317,6 +317,12 @@ When rendered, the UI shows: `discovered by <pseudonym>`. If later edited by ano
 
 Never shown: the underlying `user_id`. Pseudonyms can be changed per-branch; the link to the real user lives in the `users` table, permission-gated.
 
+## Moderation
+
+Wave 1 safety is prompt-injected on every LLM call against the world's content rating (default `family`). No separate moderation pipeline, post-generation moderation pass, or Haiku classifier loop in Wave 1 — the per-family single-instance deployment model makes those unnecessary. See `16_PRIVACY_AND_MINORS.md` for the full rationale and what is deferred to Wave 4+ (public worlds).
+
+The image-gen prompt safety suffix is applied uniformly: `Family-friendly, no gore, no violence, no suggestive content.` on any world with rating `family`.
+
 ## Rate limits & cost ceilings
 
 Per-world daily budget set by world owner. Default: $5/day. Tracked in a `cost_ledger` table.

@@ -24,6 +24,8 @@ The engine is text-adventure-first (p/choose/goto, LoGD-style chat, free-text ex
 
 8. **Everything edits by prompt.** Locations, scripts, images, NPCs, theme — any artifact has an "Edit with prompt" affordance. Every edit creates a new version; rollback always available.
 
+9. **Per-family self-hosted deployment; default content rating "family."** One instance per family. Each family runs their own Cloudflare / Convex / Anthropic / fal.ai accounts. Wave 1–3 stay single-tenant per instance; cross-family public deployment is Wave 4+ and has a separately-specified privacy/moderation story. See `16_PRIVACY_AND_MINORS.md`.
+
 ## Locked technical decisions
 
 | Decision | Choice |
