@@ -15,9 +15,9 @@ At the end of Wave 0, you have:
 3. **One hand-authored location** with a meaningful option.
 4. **Art generation pipeline** end-to-end: enqueue → fal.ai → R2 → entity update → UI refresh.
 5. **World bible entity** hand-crafted (short version — 1 biome, 1 character, 1 style anchor).
-6. **Durable runtime skeleton** — generator-based, event-logged, replayable.
+6. **Durable runtime skeleton** — step-keyed state machine, transition-logged, resumable.
 7. **One durable flow** exercising the runtime (a simple "talk to NPC" exchange).
-8. **Crash test**: kill the server mid-flow, restart, confirm player resumes at the exact yield point.
+8. **Crash test**: kill the server mid-flow, restart, confirm player resumes at the exact current step.
 9. **SvelteKit shell** with mobile-first layout, reactive queries to Convex, PWA manifest.
 10. **Auto-rollback infrastructure** stubbed (pre-deploy gate running at least one smoke test).
 
@@ -80,32 +80,49 @@ No: world bible builder UI, expansion loop, module system, browser module design
 
 ## Week 2 — Durable runtime
 
-### Day 6-7: Runtime scaffolding
+### Day 6-7: Runtime scaffolding (step-keyed state machines)
 
-- [ ] Implement generator-based flow runner:
-  - `Flow` is `function* (ctx)`.
-  - Runner drives generator, each `yield op` is recorded to `events` table.
-  - Resume: re-run generator, match yields against log, feed recorded results back.
-- [ ] Implement ops: `p`, `choose`, `mutate`, `goto`.
+- [ ] Implement state-machine flow runner (see `01_ARCHITECTURE.md` §"Durable runtime"):
+  - A module is a `ModuleDef` = `{ name, schema_version, manifest, steps: { [id]: StepHandler | TerminalStep } }`.
+  - Runner reads `flows` row, calls `module.steps[current_step_id]` with `(ctx, state, input?)`, applies the returned `{ next, state?, effects?, ui? }`.
+  - Persist after each transition: update `flows.current_step_id`, write `flows.state_blob_hash`, append to `flow_transitions`.
+- [ ] Implement effects: `p` (narration append), `mutate` (state change via ctx proxy), `goto` (flow stack push).
 - [ ] Wire one durable flow — talking to a simple NPC named "Violet":
   ```ts
-  async function* violetGreeting(ctx: FlowCtx) {
-    yield p`Violet wipes the counter. "Welcome, traveler."`
-    const pick = yield choose({ greet: "Greet her back", silent: "Say nothing" })
-    if (pick === "greet") {
-      yield p`She smiles. "Safe roads, then."`
-    }
+  const violetGreeting: ModuleDef = {
+    name: "violet_arc",
+    schema_version: 1,
+    manifest: { reads: [], writes: [], emits: [] },
+    steps: {
+      open: async (ctx) => {
+        ctx.say('Violet wipes the counter. "Welcome, traveler."')
+        return {
+          next: "await_choice",
+          ui: { choices: [
+            { id: "greet",  label: "Greet her back" },
+            { id: "silent", label: "Say nothing" },
+          ]},
+        }
+      },
+      await_choice: async (ctx, state, input) => {
+        if (input?.choice === "greet") {
+          ctx.say('She smiles. "Safe roads, then."')
+        }
+        return { next: "done" }
+      },
+      done: { terminal: true },
+    },
   }
   ```
-- [ ] Start flow from a JSON location's option: `{"target": "#module:violet_arc/violetGreeting"}`.
-- [ ] UI shows each yielded `p` and blocks on `choose`.
+- [ ] Start flow from a JSON location's option: `{"target": "#module:violet_arc/open"}`.
+- [ ] UI shows narration output from each step and blocks on a step that returned `ui: { choices }`.
 
-### Day 8: Event log + replay
+### Day 8: Transition log + resume
 
-- [ ] Append-only `events` table with `flow_id`, `op_index`, `op`, `result`, `seed`.
-- [ ] Replay mode: restart server, load `flow_id`, re-run generator, confirm same output up to last recorded yield.
-- [ ] Crash test: kill the action mid-generator (force throw), restart, confirm player sees "resume" and picks up at the exact prior yield.
-- [ ] Document determinism caveats: `now()` must come from ctx, not `Date.now()`; RNG must use `ctx.rng()`.
+- [ ] Append-only `flow_transitions` table with `flow_id`, `step_from`, `step_to`, `state_blob_hash`, `effects`, `created_at` (see `09_TECH_STACK.md`).
+- [ ] Resume mode: restart server, load `flows` row, look up handler for `current_step_id`, call with stored state + pending input. No replay — the row IS the resumption state.
+- [ ] Crash test: kill the action mid-step (force throw *before* the transition commit), restart, confirm the flow's `current_step_id` unchanged (the step is idempotent — effects already applied during the step go through ctx.mutate, which is seeded and dedupe-safe on retry).
+- [ ] Document determinism rules: `now()` and `Math.random()` are free to use *inside* a step (non-deterministic is fine because the step runs once per transition), but any AI call / image gen / RNG that needs to be stable across crash-resume goes through `ctx.ai.*` / `ctx.rng` which stamp seeds derived from `(flow_id, step_id, effect_label, world_id, branch_id)`.
 
 ### Day 9: Version pinning + escape handler (minimal)
 
@@ -134,7 +151,7 @@ At the end of Wave 0, this sequence must pass:
 4. Three options visible; tap "Head toward the village center."
 5. Arrive at "village_square." Art loads (was pre-generated or comes in within 15s).
 6. Tap "Talk to Violet." Durable flow starts. See "Violet wipes the counter..." Tap "Greet her back." See "She smiles..."
-7. Kill the browser tab mid-flow right before the choice. Reload. Flow resumes exactly where it was.
+7. Kill the browser tab mid-flow right before the choice. Reload. Flow resumes at the same step with the same choices presented.
 8. Run a manual expansion: from village_square, imagine "the old well" option is unresolved → manually trigger `generateLocation(hint="the old well")` via a debug button → within 10s, new location exists with valid JSON, linked as an option.
 9. Art for the new location arrives within 30s on next visit.
 
@@ -156,7 +173,7 @@ If all 9 pass, Wave 0 is done.
 No world bible builder UI. Bible is seeded by hand.
 No expansion loop for free-text. Expansion is manual-triggered only.
 No module system. Durable flows hand-coded.
-No capability sandbox. Flows run trusted.
+No capability sandbox (runtime isolate). Flows run as trusted TypeScript; the typed-proxy `ModuleCtx` is in place as a documentation + bug-catching layer.
 No browser designer. Everything authored in code/JSON files.
 No theme generation.
 No attribution UI. Pseudonyms present in schema but hardcoded.

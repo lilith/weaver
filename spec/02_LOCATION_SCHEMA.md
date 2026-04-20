@@ -2,7 +2,7 @@
 
 ## Goal
 
-One schema that covers ~95% of hand-authored and AI-generated content. When this isn't enough, the location upgrades to an inline script (4%) or a full module (1%).
+One schema that covers the majority of hand-authored and AI-generated content. When this isn't enough, the location hands off to a durable module via a `#module:<name>/<step>` target. The extended template grammar in §"Template grammar" handles conditional prose, seeded RNG, and dice rolls inline — the old inline-script path is deprecated.
 
 ## The schema
 
@@ -27,7 +27,7 @@ export const LocationEffect = z.discriminatedUnion("kind", [
 export const LocationOption = z.object({
   label: z.string(),                        // button text
   condition: z.string().optional(),         // mini-predicate string, e.g. "character.inventory.has('key')"
-  target: z.string().optional(),            // location id OR "#inline:scriptname" OR "#module:name/method"
+  target: z.string().optional(),            // location id OR "#module:<name>/<step>"
   effect: z.array(LocationEffect).optional(),
   hidden_until: z.string().optional(),      // predicate that must become true
   author_pseudonym: z.string().optional(),  // who added this option

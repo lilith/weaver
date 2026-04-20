@@ -39,7 +39,7 @@ The engine is text-adventure-first (p/choose/goto, LoGD-style chat, free-text ex
 | Hosting | Cloudflare Pages (unlimited bandwidth free) |
 | Auth | Better Auth + Resend magic links |
 | Voice (optional, later) | Whisper WebGPU in-browser |
-| Runtime execution | Generator-based durable workflows for modules; direct interpreter for inline scripts; pure data rendering for JSON locations |
+| Runtime execution | Step-keyed state-machine modules for durable flows; pure-data template rendering with safe inline expressions for JSON locations |
 
 ## Wave structure
 

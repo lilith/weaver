@@ -227,7 +227,7 @@ RNG is still a pure function of seed parts: `rng(flow_id, step_id, effect_label,
 
 ## Version pinning and escape handlers
 
-Every durable flow, module, combat encounter, and inline script carries `schema_version`. Runtime keeps old version handlers loaded as long as any live row references them. On read:
+Every durable flow, module, and combat encounter carries `schema_version`. Runtime keeps old version handlers loaded as long as any live row references them. On read:
 
 ```ts
 const encounter = await readEncounter(id)

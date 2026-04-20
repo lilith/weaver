@@ -44,8 +44,11 @@ export const forkBranch = mutation({
     const world_id = source.world_id
     const fork_at = args.fork_at ?? Date.now()
 
-    // 1. Resolve active flows in source branch at fork_at (fire escape handlers).
-    //    Captures a clean "settled" state for the fork.
+    // 1. Resolve active flows in source branch at fork_at. Each flow's current step
+    //    is fast-forwarded to a terminal state via its module's escape handler (the
+    //    same one that runs on missing-version-handler GC — see 01_ARCHITECTURE.md
+    //    §"Version pinning and escape handlers"). This captures a clean "settled"
+    //    state for the fork under the state-machine runtime.
     await settleActiveFlows(ctx, args.source_branch_id, fork_at)
 
     // 2. Create the new branch row.

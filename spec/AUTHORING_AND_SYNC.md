@@ -42,8 +42,10 @@ my-world/
 │   └── <slug>.md
 ├── refs/                   # canonical reference images (style, biome, character)
 │   └── <slug>.md
-├── scripts/                # inline scripts (Path 2)
-│   └── <slug>.weaver
+├── modules/                # durable modules (Path 2, TypeScript)
+│   └── <slug>/
+│       ├── manifest.json
+│       └── steps.ts
 └── themes/
     └── current.json
 ```
@@ -76,9 +78,19 @@ Used for entities with no prose component.
 
 Used for: **themes, refs** (when the payload is a blob reference + metadata, not prose).
 
-### Convention C — weaver script files
+### Convention C — module directories
 
-Inline scripts (Path 2) live in `scripts/<slug>.weaver`. See `03_INLINE_SCRIPT.md` for the grammar. The file is pure script; a matching `scripts/<slug>.meta.yaml` carries any metadata (author, tags, linked entity).
+Durable modules (Path 2) live in `modules/<slug>/`:
+
+```
+modules/merchant-arc/
+├── manifest.json          # declared reads/writes/emits, schema_version, entrypoint step
+└── steps.ts               # TypeScript ModuleDef — step handlers as typed functions
+```
+
+The module is imported by the runtime as compiled TypeScript (Wave 1-3 trusted-code model; see `01_ARCHITECTURE.md` §"Module context"). The importer validates the manifest shape, type-checks `steps.ts` against the `ModuleDef` type, and registers the module handlers in the runtime.
+
+Inline-script files (`scripts/<slug>.weaver`) are deprecated — see `03_INLINE_SCRIPT.md`. Content from prior drafts that used inline scripts should be ported to either inline expressions in the JSON template or a small module.
 
 ## What's in files vs. DB-only
 
@@ -254,7 +266,7 @@ Body becomes `description_template`. The template grammar is the real engine gra
 
 `target` values reference other authored entities by slug. The importer resolves slugs to Convex IDs. An unresolved slug during `--mode=new` import creates a stub location, same as the expansion loop does (flagged in the validator output so you see it).
 
-`#inline:<script-slug>` and `#module:<name>/<method>` targets work in files too — the importer resolves scripts by slug against `scripts/`.
+`#module:<name>/<step>` targets work in files — the importer resolves module names by slug against `modules/`. `#inline:` targets are deprecated (see `03_INLINE_SCRIPT.md`).
 
 ### npcs/\<slug\>.md
 
@@ -324,16 +336,39 @@ Convention B. A canonical reference image (style anchor, biome anchor, character
 
 `blob_hash` is the content-addressed key into the blob store (`12_BLOB_STORAGE.md`). If you don't have one yet, leave it `null` — the importer enqueues generation from `prompt`.
 
-### scripts/\<slug\>.weaver
+### modules/\<slug\>/
 
-Convention C. Inline script text per the grammar in `03_INLINE_SCRIPT.md`. Matching `scripts/<slug>.meta.yaml` for metadata:
+Convention C. A module directory with a manifest and a TypeScript steps file.
 
-```yaml
-# scripts/merchant-booth.meta.yaml
-slug: merchant-booth
-linked_location: merchant-booth
-author_pseudonym: Stardust
-tags: [dialogue, transaction]
+```json
+// modules/merchant-arc/manifest.json
+{
+  "slug": "merchant-arc",
+  "schema_version": 1,
+  "entrypoint": "open",
+  "reads":  ["character.inventory", "character.gold"],
+  "writes": ["character.inventory", "character.gold"],
+  "emits":  ["item_acquired"],
+  "author_pseudonym": "Stardust",
+  "tags": ["dialogue", "transaction"]
+}
+```
+
+```ts
+// modules/merchant-arc/steps.ts
+import type { ModuleDef } from "@weaver/engine"
+
+const mod: ModuleDef = {
+  name: "merchant-arc",
+  schema_version: 1,
+  manifest: { reads: [...], writes: [...], emits: [...] },
+  steps: {
+    open: async (ctx, state) => { /* ... */ },
+    /* ... */
+    done: { terminal: true },
+  },
+}
+export default mod
 ```
 
 ### themes/current.json

@@ -2,6 +2,8 @@
 
 *Flags for the implementing agent. Not edits to the spec — read this alongside, push back on the specific claim if it doesn't hold on contact with reality.*
 
+**Update 2026-04-19 (spec-review session):** sections §4 (QuickJS cold-start), §6 (95/4/1 path split), and §13 (inline-script authoring UX) are **resolved** by the session's decisions — no runtime isolate in Wave 1-3 (§4 moot), execution paths collapsed to two (§6 resolved), inline-script path deprecated (§13 resolved). The remaining items below are still open. See `17_DECISION_LOG.md` §"Revisions" for details.
+
 The specs in this directory are opinionated and confident. Some of that confidence is load-bearing (blob architecture, entity/component model, three execution paths); some is load-bearing-but-unverified (cold-start budgets, cost estimates, bundle sizes, cache hit rates). This document is the unverified list.
 
 When you implement something listed here, measure first, implement second, and surface the finding to Lilith if reality diverges from the spec.

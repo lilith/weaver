@@ -307,7 +307,7 @@ Run via `pnpm test`; Vitest.
 
 ## Property-based tests
 
-For the inline script evaluator and effect application, fast-check generates thousands of random valid inputs per test run. Asserts: no exceptions, invariants hold, state mutations are schema-valid.
+For the template-grammar evaluator (safe inline expressions) and the effect-application pipeline, fast-check generates thousands of random valid inputs per test run. Asserts: no exceptions, invariants hold, state mutations are schema-valid, seeded RNG is deterministic across runs with the same seed parts. Same pattern applies to module state-machine step handlers — each step takes `(ctx, state, input?)` and returns a `StepResult`; property-gen exercises the input space against invariants.
 
 ## Integration tests
 

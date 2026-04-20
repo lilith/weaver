@@ -261,6 +261,50 @@ These tasks run concurrently. Each agent gets one.
 **Effort:** ~2 hours (was 2 days in the original C6 scope before per-family-instance simplification).
 **Owner:** agent, as part of whichever Phase B/C task they're already in.
 
+#### C7. Multi-tenant isolation: `world_memberships` + helper + adversarial tests
+
+**Depends on:** A1.
+**Deliverable:** The isolation primitives from `ISOLATION_AND_SECURITY.md`. Adversarial-isolation test category in the trinity.
+**Acceptance:**
+- `world_memberships` table in schema with the shape in `09_TECH_STACK.md`.
+- `requireMembership(ctx, world_id)` helper in `packages/engine/auth/` called from every world-scoped query/mutation.
+- Every existing query/mutation audited for world-scoping; `world_id` required in the signature; indexes rewritten to start with `[world_id, ...]` where missing.
+- AI cache keys include `world_id` + `branch_id` (`packages/engine/ai/cache.ts`).
+- Prompt sanitizer for user-sourced content; wrap-in-delimited-tags pattern in every LLM call.
+- `audit_log` table + `logAuditAction(ctx, action, target)` helper.
+- `packages/test/isolation/` with the named tests from `ISOLATION_AND_SECURITY.md` §"Adversarial isolation tests."
+**Files:** schema, `packages/engine/auth/`, `packages/engine/ai/cache.ts`, `packages/engine/ai/sanitize.ts`, `packages/test/isolation/*`, lint rule for mutation/query signatures.
+**Effort:** 1 day.
+**Owner:** you + agent in pair. This is a security boundary — review carefully.
+
+#### C8. Admin debug surface (operator backdoor)
+
+**Depends on:** C5, C7.
+**Deliverable:** A minimal, audit-logged way for you (as instance owner) to log in as any user for debug/support purposes. Not a global admin role — a one-shot audited session.
+**Acceptance:**
+- `/admin/debug-as/:user_id` route, gated by your user being an owner on any world the target user plays in (or instance-owner status resolved via a `.env` allowlist fallback).
+- Every use writes an `audit_log` row with `action: "debug_session"`, target = target user_id, note = reason string required in the form.
+- Session auto-expires after 30 minutes.
+- Visible to the target user as "Your grown-up signed in as you at <time> for <reason>." (non-dismissable banner).
+- Never usable on worlds you are not a member of, even for debug.
+**Files:** `apps/play/src/routes/admin/*`, `convex/debug/*`.
+**Effort:** 0.5 day.
+**Owner:** agent.
+
+#### C9. Pre-world cost attribution
+
+**Depends on:** A1, A2.
+**Deliverable:** Cost ledger can attribute AI calls before a world exists (during bible-build / onboarding). Prevents a family from burning $5 in the bible builder with no attribution trail.
+**Acceptance:**
+- `cost_ledger.world_id` is optional; when null, `pending_world_draft_id` (new optional field referencing a `world_drafts` table) identifies the in-progress bible build.
+- `world_drafts` table: `{user_id, started_at, state_blob_hash, committed_to_world_id, aborted_at}`.
+- On bible-commit, all cost-ledger rows for that draft are re-attributed to the committed world.
+- On bible-abort (user backs out), the cost stays attributed to the drafting user; no world link.
+- Per-user daily cap applies through draft state (a kid can't burn $50 in bible-builder regens).
+**Files:** schema, `convex/worldBible/*`, `convex/costLedger/*`.
+**Effort:** 0.5 day.
+**Owner:** agent, same agent as A2.
+
 ### Phase D — Deploy + closed beta (week 4, you + 1 agent)
 
 #### D1. Deploy pipeline + auto-rollback

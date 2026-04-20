@@ -20,7 +20,7 @@
 | LLM SDK | @anthropic-ai/sdk | latest | |
 | Image gen | @fal-ai/client | latest | FLUX.2 [pro] |
 | Browser voice | @xenova/transformers | latest | Whisper WebGPU; see `15_VOICE_INPUT.md` |
-| Rich text | CodeMirror 6 | latest | For inline script editor |
+| Rich text | CodeMirror 6 | latest | For module source editor (desktop advanced mode) |
 | Code editor | Monaco (lazy) | latest | Desktop module designer only |
 | Animation | Motion | latest | Framer Motion's Svelte-friendly successor |
 | PWA | vite-plugin-pwa | latest | |
@@ -521,11 +521,11 @@ convex/scheduled/
 `transient_branch_gc` is the cleanup path for dreams + test branches. Transient branches set `expires_at` at creation (default 30 minutes for dream, 24 hours for test fork). The GC job:
 
 1. Scans `branches` by the `by_expires` index for `transient=true AND expires_at<now`.
-2. For each, deletes entity rows, component rows, relation rows, chat threads, flows, and events with matching `branch_id`. Payload blobs are left in place — they may be referenced elsewhere, and refcount GC handles them.
-3. A separate blob refcount GC (daily) removes blobs with `refcount=0` older than 7 days (grace period in case a fork races).
+2. For each, deletes entity rows, component rows, relation rows, chat threads, flows, and flow_transitions with matching `branch_id`. Payload blobs are left in place — they may be referenced elsewhere, and the mark-sweep blob GC handles them on its own cadence.
+3. A separate blob mark-sweep GC (daily mark, weekly sweep with 7-day grace) removes blobs that weren't marked reachable in the most recent pass. See `12_BLOB_STORAGE.md` §"Garbage collection."
 4. Deletes the branch row last.
 
-This is why blob + branch architecture matters: the GC is trivial — delete heads rows, let blob refcounts do the rest.
+This is why blob + branch architecture matters: the branch GC is trivial — delete heads rows, and the next mark-sweep pass naturally drops any blobs that are no longer reachable from any branch's heads.
 
 ## Model routing (Wave 1)
 
