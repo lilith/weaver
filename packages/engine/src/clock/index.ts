@@ -85,17 +85,31 @@ export function advanceWorldTime(
 	};
 }
 
-/** Minimal safe expression evaluator for option `condition:` strings.
- *  Supports: path lookup (a.b.c), string / number / bool / null literals,
- *  ==, !=, <, <=, >, >=, &&, ||, !, parens. No function calls, no
- *  arithmetic beyond comparison. Returns boolean. */
-export function evalCondition(
+/** Safe expression evaluator for option `condition:` / template `{{…}}`.
+ *  Grammar (lowest → highest precedence):
+ *    ternary:   `a ? b : c`                          (right-associative)
+ *    or:        `a || b`
+ *    and:       `a && b`
+ *    unary-not: `!a`
+ *    compare:   `== != < <= > >=`
+ *    add:       `+ -`
+ *    mul:       `* /`
+ *    unary-neg: `-a`
+ *    atom:      literal | ident[.path] | ident(args) | (expr)
+ *  Functions:   rand(), rand_int(lo,hi), dice(n,s), min/max(...),
+ *               pick(...), has(coll,val), length(x).
+ *  RNG is injectable. Callers should pass a seeded rng (by
+ *  branch+turn+entity) so re-renders are deterministic; omitting
+ *  falls back to Math.random. */
+export function evalExpression(
 	expr: string,
 	scope: Record<string, unknown>,
-): boolean {
-	if (!expr || !expr.trim()) return true;
+	rng?: () => number,
+): unknown {
+	if (!expr || !expr.trim()) return undefined;
 	const tokens = tokenize(expr);
 	let pos = 0;
+	const rnd = rng ?? Math.random;
 
 	function peek() {
 		return tokens[pos];
@@ -108,12 +122,24 @@ export function evalCondition(
 		return t;
 	}
 
+	function parseTernary(): unknown {
+		const cond = parseOr();
+		if (peek()?.kind === "?") {
+			consume("?");
+			const a = parseTernary();
+			consume(":");
+			const b = parseTernary();
+			return truthy(cond) ? a : b;
+		}
+		return cond;
+	}
 	function parseOr(): unknown {
 		let left = parseAnd();
 		while (peek()?.kind === "||") {
 			consume("||");
 			const right = parseAnd();
-			left = Boolean(left) || Boolean(right);
+			// Lazy OR: keep the first truthy value (matches JS ||).
+			left = truthy(left) ? left : right;
 		}
 		return left;
 	}
@@ -122,33 +148,59 @@ export function evalCondition(
 		while (peek()?.kind === "&&") {
 			consume("&&");
 			const right = parseNot();
-			left = Boolean(left) && Boolean(right);
+			left = truthy(left) ? right : left;
 		}
 		return left;
 	}
 	function parseNot(): unknown {
 		if (peek()?.kind === "!") {
 			consume("!");
-			return !Boolean(parseNot());
+			return !truthy(parseNot());
 		}
 		return parseCmp();
 	}
 	function parseCmp(): unknown {
-		const left = parseAtom();
+		const left = parseAdd();
 		const op = peek();
 		if (op && ["==", "!=", "<", "<=", ">", ">="].includes(op.kind)) {
 			consume(op.kind);
-			const right = parseAtom();
+			const right = parseAdd();
 			return compare(op.kind, left, right);
 		}
 		return left;
+	}
+	function parseAdd(): unknown {
+		let left = parseMul();
+		while (peek()?.kind === "+" || peek()?.kind === "-") {
+			const op = consume().kind;
+			const right = parseMul();
+			left = op === "+" ? numAdd(left, right) : numSub(left, right);
+		}
+		return left;
+	}
+	function parseMul(): unknown {
+		let left = parseUnary();
+		while (peek()?.kind === "*" || peek()?.kind === "/") {
+			const op = consume().kind;
+			const right = parseUnary();
+			left = op === "*" ? numMul(left, right) : numDiv(left, right);
+		}
+		return left;
+	}
+	function parseUnary(): unknown {
+		if (peek()?.kind === "-") {
+			consume("-");
+			const v = parseUnary();
+			return -Number(v);
+		}
+		return parseAtom();
 	}
 	function parseAtom(): unknown {
 		const t = peek();
 		if (!t) throw new Error("unexpected end");
 		if (t.kind === "(") {
 			consume("(");
-			const v = parseOr();
+			const v = parseTernary();
 			consume(")");
 			return v;
 		}
@@ -162,16 +214,115 @@ export function evalCondition(
 			if (t.value === "false") return false;
 			if (t.value === "null") return null;
 			if (t.value === "undefined") return undefined;
+			// Function call?
+			if (peek()?.kind === "(") {
+				return callFunction(t.value);
+			}
 			return lookupPath(scope, t.value);
 		}
 		throw new Error(`unexpected token ${t.kind}`);
 	}
-	try {
-		const v = parseOr();
-		return Boolean(v);
-	} catch {
-		return false;
+	function parseArgs(): unknown[] {
+		consume("(");
+		const out: unknown[] = [];
+		if (peek()?.kind === ")") {
+			consume(")");
+			return out;
+		}
+		out.push(parseTernary());
+		while (peek()?.kind === ",") {
+			consume(",");
+			out.push(parseTernary());
+		}
+		consume(")");
+		return out;
 	}
+	function callFunction(name: string): unknown {
+		const args = parseArgs();
+		switch (name) {
+			case "rand":
+				return rnd();
+			case "rand_int": {
+				const lo = Math.floor(Number(args[0] ?? 0));
+				const hi = Math.floor(Number(args[1] ?? 0));
+				const a = Math.min(lo, hi), b = Math.max(lo, hi);
+				return Math.floor(rnd() * (b - a + 1)) + a;
+			}
+			case "dice": {
+				const n = Math.max(0, Math.floor(Number(args[0] ?? 1)));
+				const s = Math.max(1, Math.floor(Number(args[1] ?? 6)));
+				let total = 0;
+				for (let i = 0; i < n; i++) total += Math.floor(rnd() * s) + 1;
+				return total;
+			}
+			case "min":
+				return args.reduce((m: number, v) => Math.min(m, Number(v)), Infinity);
+			case "max":
+				return args.reduce((m: number, v) => Math.max(m, Number(v)), -Infinity);
+			case "pick":
+				if (args.length === 0) return undefined;
+				return args[Math.floor(rnd() * args.length)];
+			case "has": {
+				const coll = args[0];
+				const val = args[1];
+				if (Array.isArray(coll)) return coll.some((x) => x === val || String(x) === String(val));
+				if (coll && typeof coll === "object")
+					return Object.prototype.hasOwnProperty.call(coll, String(val));
+				if (typeof coll === "string") return coll.includes(String(val));
+				return false;
+			}
+			case "length": {
+				const v = args[0];
+				if (Array.isArray(v) || typeof v === "string") return v.length;
+				if (v && typeof v === "object") return Object.keys(v).length;
+				return 0;
+			}
+			default:
+				throw new Error(`unknown function: ${name}`);
+		}
+	}
+	try {
+		return parseTernary();
+	} catch {
+		return undefined;
+	}
+}
+
+/** Boolean wrapper around evalExpression — existing callers. */
+export function evalCondition(
+	expr: string,
+	scope: Record<string, unknown>,
+	rng?: () => number,
+): boolean {
+	if (!expr || !expr.trim()) return true;
+	const v = evalExpression(expr, scope, rng);
+	return truthy(v);
+}
+
+function truthy(v: unknown): boolean {
+	if (v == null || v === false || v === 0 || v === "") return false;
+	if (typeof v === "number" && Number.isNaN(v)) return false;
+	return Boolean(v);
+}
+
+function numAdd(a: unknown, b: unknown): unknown {
+	// If either side is a string, concatenate (predictable template
+	// authoring). Otherwise, numeric.
+	if (typeof a === "string" || typeof b === "string") {
+		return String(a ?? "") + String(b ?? "");
+	}
+	return Number(a) + Number(b);
+}
+function numSub(a: unknown, b: unknown): number {
+	return Number(a) - Number(b);
+}
+function numMul(a: unknown, b: unknown): number {
+	return Number(a) * Number(b);
+}
+function numDiv(a: unknown, b: unknown): number {
+	const d = Number(b);
+	if (d === 0) return 0; // never throw from template; 0 is the forgiving default
+	return Number(a) / d;
 }
 
 function compare(op: string, a: unknown, b: unknown): boolean {
@@ -221,6 +372,10 @@ type Token =
 	| { kind: "ident"; value: string }
 	| { kind: "(" }
 	| { kind: ")" }
+	| { kind: "," }
+	| { kind: "?" }
+	| { kind: ":" }
+	| { kind: "+" | "-" | "*" | "/" }
 	| { kind: "==" | "!=" | "<" | "<=" | ">" | ">=" }
 	| { kind: "&&" | "||" | "!" };
 
@@ -234,6 +389,16 @@ function tokenize(src: string): Token[] {
 			continue;
 		}
 		if (c === "(" || c === ")") {
+			out.push({ kind: c });
+			i++;
+			continue;
+		}
+		if (c === "," || c === "?" || c === ":") {
+			out.push({ kind: c });
+			i++;
+			continue;
+		}
+		if (c === "+" || c === "-" || c === "*" || c === "/") {
 			out.push({ kind: c });
 			i++;
 			continue;

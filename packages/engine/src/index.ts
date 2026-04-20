@@ -7,3 +7,4 @@ export * from "./flags/index.js";
 export * from "./effects/index.js";
 export * from "./flows/index.js";
 export * from "./art/prompts.js";
+export * from "./diagnostics/index.js";

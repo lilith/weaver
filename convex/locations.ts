@@ -14,6 +14,8 @@ import {
   resolveEffectFlags,
   type EffectExecCtx,
 } from "./effects.js";
+import { logBugs } from "./diagnostics.js";
+import { sanitizeCharacterState } from "@weaver/engine/diagnostics";
 import { internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
@@ -434,9 +436,19 @@ export const applyOption = mutation({
     }
 
     // Persist the character after all effects (option + biome hooks)
-    // have mutated exec.state / exec.thisScope.
+    // have mutated exec.state / exec.thisScope. Runtime-sanitize first
+    // so any invariant violation gets healed + logged rather than
+    // persisting corrupted state.
+    const { state: sanitized, fixes } = sanitizeCharacterState(state);
+    if (fixes.length > 0) {
+      await logBugs(ctx, fixes, {
+        world_id,
+        branch_id,
+        character_id: character._id,
+      });
+    }
     await ctx.db.patch(character._id, {
-      state,
+      state: sanitized,
       current_location_id:
         newLocationEntity?._id ?? character.current_location_id,
       updated_at: Date.now(),

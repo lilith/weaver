@@ -47,7 +47,20 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 	};
 	const description = renderTemplate(location.description_template as string, ctx as any);
 
-	const palette = getBiomePalette(location.biome as string);
+	// Entity-authored palette first (auto-gen'd per biome), static
+	// registry fallback. Entity lookup is cheap — same branch.
+	let palette = null as ReturnType<typeof getBiomePalette> | null;
+	try {
+		const fromEntity = await client.query(api.worlds.getBiomePaletteFromEntity, {
+			session_token: locals.session_token,
+			world_slug: params.world_slug,
+			biome_slug: (location as any).biome as string
+		});
+		if (fromEntity) palette = fromEntity as any;
+	} catch {
+		/* fall through to static registry */
+	}
+	if (!palette) palette = getBiomePalette((location as any).biome as string);
 	const paletteCss = palette ? paletteToCss(palette) : null;
 
 	// Flag gate for the art-curation wardrobe. Falls back to the legacy

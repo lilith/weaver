@@ -13,7 +13,8 @@
     "./flags": "./src/flags/index.ts",
     "./effects": "./src/effects/index.ts",
     "./flows": "./src/flows/index.ts",
-    "./art": "./src/art/prompts.ts"
+    "./art": "./src/art/prompts.ts",
+    "./diagnostics": "./src/diagnostics/index.ts"
   },
   "peerDependencies": {
     "@noble/hashes": "*",

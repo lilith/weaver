@@ -398,6 +398,26 @@ export default defineSchema({
   }).index("by_world_kind", ["world_id", "kind", "order"]),
 
   // ---------------------------------------------------------------
+  // Runtime bugs — invariant violations caught by sanitizers on the
+  // hot path. Rate-limited per (code, world): the same code for the
+  // same world increments seen_count rather than inserting a new row.
+  runtime_bugs: defineTable({
+    world_id: v.optional(v.id("worlds")),
+    branch_id: v.optional(v.id("branches")),
+    character_id: v.optional(v.id("characters")),
+    severity: v.union(v.literal("info"), v.literal("warn"), v.literal("error")),
+    code: v.string(),
+    message: v.string(),
+    context: v.optional(v.any()),
+    seen_count: v.number(),
+    first_seen_at: v.number(),
+    last_seen_at: v.number(),
+  })
+    .index("by_world_severity_time", ["world_id", "severity", "last_seen_at"])
+    .index("by_world_code", ["world_id", "code"])
+    .index("by_severity_time", ["severity", "last_seen_at"]),
+
+  // ---------------------------------------------------------------
   // Feature flags — one row per (key, scope). Resolution char→user→world→global.
   // See packages/engine/src/flags/index.ts for the resolver.
   feature_flags: defineTable({

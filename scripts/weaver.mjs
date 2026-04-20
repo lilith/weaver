@@ -294,6 +294,10 @@ async function dispatch() {
       return cmdFlow(rest);
     case "art":
       return cmdArt(rest);
+    case "bugs":
+      return cmdBugs(rest);
+    case "biome":
+      return cmdBiome(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -1809,6 +1813,115 @@ async function cmdArt([sub, ...a]) {
     return out(e, (o) => `entity ${o.type}/${o.slug} id=${o.id}`);
   }
   err("usage: weaver art [modes|variants|conjure|regen-variant|delete|undelete|upvote|feedback|board-add|migrate|show|regen] ...", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: bugs (runtime diagnostics — invariant violations caught
+// by sanitizers on the hot path)
+
+async function cmdBugs([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  if (!sub || sub === "list") {
+    const sevIdx = a.indexOf("--severity");
+    const sinceIdx = a.indexOf("--since");
+    const worldIdx = a.indexOf("--world");
+    const severity = sevIdx >= 0 ? a[sevIdx + 1] : undefined;
+    const sinceHours = sinceIdx >= 0 ? parseFloat(a[sinceIdx + 1]) : 24;
+    const worldScope = worldIdx >= 0 ? a[worldIdx + 1] : flags.world ?? cfg.world_slug;
+    const rows = await client.query(ref("diagnostics.listBugs"), {
+      session_token: cfg.session_token,
+      world_slug: worldScope ?? undefined,
+      severity,
+      since_ms: Date.now() - sinceHours * 3600 * 1000,
+      limit: flags.limit ?? 100,
+    });
+    return out(
+      rows,
+      (rs) =>
+        rs.length === 0
+          ? `(no bugs in last ${sinceHours}h${severity ? ` at severity=${severity}` : ""})`
+          : rs
+              .map(
+                (r) =>
+                  `[${r.severity.padEnd(5)}] ${r.code.padEnd(38)} ×${String(r.seen_count).padStart(3)}  ${r.message}`,
+              )
+              .join("\n"),
+    );
+  }
+  if (sub === "clear") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: clear is owner-only", 2);
+    const code = a[0];
+    const r = await client.mutation(ref("diagnostics.clearBugs"), {
+      session_token: cfg.session_token,
+      world_slug: currentWorld(),
+      code,
+    });
+    return out(r, (o) => `cleared ${o.cleared} bug row(s)`);
+  }
+  err("usage: weaver bugs [list [--severity X] [--since Nh] [--world SLUG]|clear [CODE]]", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: biome (auto-palette gen — UX-05)
+
+async function cmdBiome([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  if (sub === "auto-palette") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: auto-palette is owner-only", 2);
+    const [biome_slug] = a;
+    if (!biome_slug) err("usage: weaver biome auto-palette <biome_slug>", 2);
+    const r = await client.action(ref("worlds.generateBiomePalette"), {
+      session_token: cfg.session_token,
+      world_slug: currentWorld(),
+      biome_slug,
+    });
+    return out(
+      r,
+      (o) =>
+        o.generated
+          ? `generated palette for biome/${biome_slug} (v${o.version})`
+          : `biome/${biome_slug} already had a palette (v${o.version})`,
+    );
+  }
+  if (sub === "auto-palette-all") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: auto-palette-all is owner-only", 2);
+    const biomes = await client.query(ref("cli.listEntities"), {
+      session_token: cfg.session_token,
+      world_slug: currentWorld(),
+      type: "biome",
+    });
+    const results = [];
+    for (const b of biomes) {
+      try {
+        const r = await client.action(ref("worlds.generateBiomePalette"), {
+          session_token: cfg.session_token,
+          world_slug: currentWorld(),
+          biome_slug: b.slug,
+        });
+        results.push({ slug: b.slug, ...r });
+      } catch (e) {
+        results.push({ slug: b.slug, error: e?.message ?? String(e) });
+      }
+    }
+    return out(results, (rs) =>
+      rs
+        .map(
+          (r) =>
+            r.error
+              ? `  ${r.slug.padEnd(28)} ERROR ${r.error}`
+              : r.generated
+                ? `  ${r.slug.padEnd(28)} generated (v${r.version})`
+                : `  ${r.slug.padEnd(28)} already has palette`,
+        )
+        .join("\n"),
+    );
+  }
+  err("usage: weaver biome [auto-palette <slug>|auto-palette-all]", 2);
 }
 
 // ---------------------------------------------------------------

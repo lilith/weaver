@@ -16,6 +16,8 @@ import { writeJSONBlob, readJSONBlob } from "./blobs.js";
 import { recordJourneyTransition } from "./journeys.js";
 import { scheduleArtForEntity } from "./art.js";
 import { isFeatureEnabled } from "./flags.js";
+import { logBugs } from "./diagnostics.js";
+import { sanitizeLocationPayload } from "@weaver/engine/diagnostics";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 2048;
@@ -208,7 +210,14 @@ export const insertExpandedLocation = internalMutation({
     const branch_id = world.current_branch_id;
     const effectiveMode = mode ?? "expand";
 
-    const loc = location as Location;
+    // Sanitize the Opus-generated payload before it goes to disk. Any
+    // malformed field (empty slug, missing biome, bad effect shape) is
+    // healed + logged as a runtime_bug rather than propagating.
+    const { payload: sanitized, fixes } = sanitizeLocationPayload(location);
+    if (fixes.length > 0) {
+      await logBugs(ctx, fixes, { world_id, branch_id });
+    }
+    const loc = sanitized as Location;
 
     // Avoid slug collision — if the slug already exists, suffix with timestamp.
     let finalSlug = loc.slug;

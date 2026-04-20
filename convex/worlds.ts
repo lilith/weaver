@@ -1,7 +1,7 @@
 // World + membership reads — every call resolves the session to a user
 // and restricts results to worlds the user is a member of.
 
-import { action, mutation, internalMutation, query } from "./_generated/server.js";
+import { action, mutation, internalMutation, internalQuery, query } from "./_generated/server.js";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api.js";
 import { resolveSession, resolveMember } from "./sessions.js";
@@ -348,6 +348,263 @@ Rules:
 - No options with \`target\`: that's for later expansion; the initial beat stays in-place.
 - No characters/npcs — leave those for the family to author.
 - Prose should match the tone descriptors exactly.`;
+
+// --------------------------------------------------------------------
+// Biome palette auto-gen (UX-05). Opus generates a CSS-variable palette
+// override for a biome, stored into the biome entity's payload.palette.
+// Used by the page-render path: helper below checks entity payload
+// first, then falls through to packages/engine/biomes/palettes.json.
+
+const PALETTE_MODEL = "claude-sonnet-4-6";
+
+export const generateBiomePalette = action({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    biome_slug: v.string(),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_slug, biome_slug },
+  ): Promise<{ generated: boolean; version: number }> => {
+    const info = await ctx.runQuery(internal.worlds.loadBiomeForPalette, {
+      session_token,
+      world_slug,
+      biome_slug,
+    });
+    if (!info) throw new Error("biome not found or forbidden");
+    if (info.already_has_palette)
+      return { generated: false, version: info.version };
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: PALETTE_MODEL,
+      max_tokens: 600,
+      temperature: 0.8,
+      system: [{ type: "text", text: PALETTE_SYSTEM_PROMPT }],
+      messages: [
+        {
+          role: "user",
+          content: `<biome>
+name: ${info.biome.name}
+tags: ${JSON.stringify(info.biome.tags ?? [])}
+establishing_shot: ${info.biome.establishing_shot_prompt ?? ""}
+description: ${info.biome.description ?? ""}
+</biome>
+
+<world_style_anchor>
+${JSON.stringify(info.style_anchor ?? {}, null, 2)}
+</world_style_anchor>
+
+Respond with strict JSON only.`,
+        },
+      ],
+    });
+
+    const text = response.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join("")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "");
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e: any) {
+      throw new Error(`palette JSON parse failed: ${e?.message ?? e}`);
+    }
+    if (!parsed?.overrides || typeof parsed.overrides !== "object")
+      throw new Error("palette response missing overrides");
+
+    return await ctx.runMutation(internal.worlds.writeBiomePalette, {
+      biome_entity_id: info.biome_entity_id,
+      palette: {
+        slug: biome_slug,
+        name: parsed.name ?? info.biome.name,
+        mood: parsed.mood ?? "",
+        overrides: parsed.overrides,
+      },
+    });
+  },
+});
+
+export const loadBiomeForPalette = internalQuery({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    biome_slug: v.string(),
+  },
+  handler: async (ctx, { session_token, world_slug, biome_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q: any) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    const { user_id } = await resolveMember(ctx as any, session_token, world._id);
+    if (world.owner_user_id !== user_id) return null;
+    if (!world.current_branch_id) return null;
+    const biomeEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q: any) =>
+        q
+          .eq("branch_id", world.current_branch_id!)
+          .eq("type", "biome")
+          .eq("slug", biome_slug),
+      )
+      .first();
+    if (!biomeEntity) return null;
+    const version = await ctx.db
+      .query("artifact_versions")
+      .withIndex("by_artifact_version", (q: any) =>
+        q
+          .eq("artifact_entity_id", biomeEntity._id)
+          .eq("version", biomeEntity.current_version),
+      )
+      .first();
+    if (!version) return null;
+    const biome = await readJSONBlob<any>(ctx as any, version.blob_hash);
+    // Bible for style_anchor.
+    const bibleEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q: any) =>
+        q.eq("branch_id", world.current_branch_id!).eq("type", "bible").eq("slug", "bible"),
+      )
+      .first();
+    let style_anchor: any = null;
+    if (bibleEntity) {
+      const bv = await ctx.db
+        .query("artifact_versions")
+        .withIndex("by_artifact_version", (q: any) =>
+          q
+            .eq("artifact_entity_id", bibleEntity._id)
+            .eq("version", bibleEntity.current_version),
+        )
+        .first();
+      if (bv) {
+        const b = await readJSONBlob<any>(ctx as any, bv.blob_hash);
+        style_anchor = b?.style_anchor ?? null;
+      }
+    }
+    return {
+      biome,
+      biome_entity_id: biomeEntity._id,
+      version: biomeEntity.current_version,
+      already_has_palette: Boolean(biome?.palette?.overrides),
+      style_anchor,
+    };
+  },
+});
+
+export const writeBiomePalette = internalMutation({
+  args: {
+    biome_entity_id: v.id("entities"),
+    palette: v.any(),
+  },
+  handler: async (ctx, { biome_entity_id, palette }) => {
+    const entity = await ctx.db.get(biome_entity_id);
+    if (!entity) throw new Error("biome entity disappeared");
+    const version = await ctx.db
+      .query("artifact_versions")
+      .withIndex("by_artifact_version", (q: any) =>
+        q
+          .eq("artifact_entity_id", biome_entity_id)
+          .eq("version", entity.current_version),
+      )
+      .first();
+    if (!version) throw new Error("biome has no current version");
+    const payload = await readJSONBlob<any>(ctx as any, version.blob_hash);
+    const nextPayload = { ...payload, palette };
+    const nextHash = await writeJSONBlob(ctx, nextPayload);
+    const nextV = entity.current_version + 1;
+    await ctx.db.insert("artifact_versions", {
+      world_id: entity.world_id,
+      branch_id: entity.branch_id,
+      artifact_entity_id: biome_entity_id,
+      version: nextV,
+      blob_hash: nextHash,
+      content_type: "application/json",
+      author_user_id: entity.author_user_id,
+      author_pseudonym: entity.author_pseudonym,
+      edit_kind: "auto_palette",
+      reason: "biome_palette_gen",
+      created_at: Date.now(),
+    });
+    await ctx.db.patch(biome_entity_id, {
+      current_version: nextV,
+      updated_at: Date.now(),
+    });
+    return { generated: true, version: nextV };
+  },
+});
+
+const PALETTE_SYSTEM_PROMPT = `You are designing a CSS-variable palette override for a biome in Weaver, a dark-themed ("midnight-loom") collaborative storytelling app. The base theme uses Tailwind-ish CSS variables like --color-velvet-800, --color-mist-600, --color-candle-300, --color-rose-400, --color-teal-400, etc. Your overrides tint the PAGE when the player is in this biome — background, ink, atmosphere.
+
+Return strict JSON matching:
+
+{
+  "name": "<1-4 words>",
+  "mood": "<evocative fragment, 3-8 words>",
+  "overrides": {
+    "--color-velvet-800": "<rgb triple like '31 26 56' — Tailwind uses space-separated channels>",
+    "--color-velvet-900": "<...>",
+    "--color-mist-100": "<...>",
+    "--color-candle-300": "<...>",
+    "--color-rose-400": "<optional accent shift>",
+    "--color-teal-400": "<optional accent shift>"
+  }
+}
+
+Rules:
+- 4-8 overrides max; pick the ones that shift the biome's feel most. Skip ones that don't help.
+- Values are RGB triples with SPACES (e.g. "31 26 56"), not hex, not commas.
+- Stay dark enough to remain readable (velvet-900 should be near-black, mist-100 near-white).
+- Respect the world style anchor's color cues when hinted.
+- No markdown, no commentary, JSON only.`;
+
+/** Fetch a biome's authored palette from its entity payload (auto-gen'd
+ *  or hand-authored). Returns null if the biome has no palette or the
+ *  biome entity isn't in the world. Used by the page loader alongside
+ *  the static registry fallback. */
+export const getBiomePaletteFromEntity = query({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    biome_slug: v.string(),
+  },
+  handler: async (ctx, { session_token, world_slug, biome_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    await resolveMember(ctx, session_token, world._id);
+    if (!world.current_branch_id) return null;
+    const entity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q) =>
+        q
+          .eq("branch_id", world.current_branch_id!)
+          .eq("type", "biome")
+          .eq("slug", biome_slug),
+      )
+      .first();
+    if (!entity) return null;
+    const v = await ctx.db
+      .query("artifact_versions")
+      .withIndex("by_artifact_version", (q) =>
+        q
+          .eq("artifact_entity_id", entity._id)
+          .eq("version", entity.current_version),
+      )
+      .first();
+    if (!v) return null;
+    const payload = await readJSONBlob<any>(ctx as any, v.blob_hash);
+    if (!payload?.palette?.overrides) return null;
+    return payload.palette;
+  },
+});
 
 export const getBible = query({
   args: { session_token: v.string(), world_id: v.id("worlds") },
