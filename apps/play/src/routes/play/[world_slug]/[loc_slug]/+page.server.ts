@@ -70,5 +70,36 @@ export const actions: Actions = {
 			redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
 		}
 		return { says: result.says };
+	},
+
+	expand: async ({ request, params, locals }) => {
+		if (!locals.session_token) return fail(401, { error: "not signed in" });
+		const form = await request.formData();
+		const input = String(form.get("input") ?? "").trim();
+		if (!input) return fail(400, { error: "please describe what you want to do" });
+
+		const client = convexServer();
+		const world = await client.query(api.worlds.getBySlugForMe, {
+			session_token: locals.session_token,
+			slug: params.world_slug
+		});
+		if (!world) return fail(404, { error: "world not found" });
+
+		let result;
+		try {
+			result = await client.action(api.expansion.expandFromFreeText, {
+				session_token: locals.session_token,
+				world_id: world._id,
+				location_slug: params.loc_slug,
+				input
+			});
+		} catch (e) {
+			return fail(500, { error: (e as Error).message });
+		}
+
+		if (result.kind === "goto") {
+			redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
+		}
+		return { narrate: result.text };
 	}
 };
