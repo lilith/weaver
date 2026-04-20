@@ -19,6 +19,31 @@ import { sanitizeCharacterState } from "@weaver/engine/diagnostics";
 import { internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
+/** Canonical shape of a location's authored payload. Uses an index
+ *  signature for forward-compat with fields the runtime hasn't typed
+ *  yet (e.g. rules, chat_thread_id, content_rating overrides). */
+export type LocationPayload = {
+  slug: string;
+  name: string;
+  biome: string;
+  description_template: string;
+  prose?: string;
+  tags?: string[];
+  safe_anchor?: boolean;
+  options: Array<{
+    label: string;
+    condition?: string;
+    target?: string;
+    effect?: Array<{ kind: string; [k: string]: unknown }>;
+  }>;
+  neighbors?: Record<string, string>;
+  on_enter?: Array<{ kind: string; [k: string]: unknown }>;
+  on_leave?: Array<{ kind: string; [k: string]: unknown }>;
+  state_keys?: string[];
+  author_pseudonym?: string;
+  [k: string]: unknown;
+};
+
 async function readAuthoredPayload<T>(
   ctx: any,
   entity: Doc<"entities">,
@@ -87,7 +112,7 @@ export const getBySlug = query({
       )
       .first();
     if (!entity) return null;
-    const payload = await readAuthoredPayload<Record<string, unknown>>(ctx, entity);
+    const payload = await readAuthoredPayload<LocationPayload>(ctx, entity);
 
     // Build the scope for condition evaluation — world clock + character state.
     const branch = await ctx.db.get(branch_id);

@@ -310,6 +310,49 @@ export function evalCondition(
 	return truthy(v);
 }
 
+/** Extract every path referenced in an expression and resolve each
+ *  against the scope. Used by the CLI dumpLocation to surface WHY an
+ *  option is hidden — the caller reads the condition + each path's
+ *  current value and sees the gap without deducing. */
+export function traceReferencedPaths(
+	expr: string,
+	scope: Record<string, unknown>,
+): Array<{ path: string; value: unknown }> {
+	if (!expr || !expr.trim()) return [];
+	const out: Array<{ path: string; value: unknown }> = [];
+	const seen = new Set<string>();
+	const reserved = new Set([
+		"true",
+		"false",
+		"null",
+		"undefined",
+		"rand",
+		"rand_int",
+		"dice",
+		"min",
+		"max",
+		"pick",
+		"has",
+		"length",
+	]);
+	try {
+		const tokens = tokenize(expr);
+		for (let i = 0; i < tokens.length; i++) {
+			const t = tokens[i];
+			if (t.kind !== "ident") continue;
+			if (reserved.has(t.value)) continue;
+			// Skip function call identifiers (followed by `(`).
+			if (tokens[i + 1]?.kind === "(") continue;
+			if (seen.has(t.value)) continue;
+			seen.add(t.value);
+			out.push({ path: t.value, value: lookupPath(scope, t.value) });
+		}
+	} catch {
+		/* unparseable — no traces */
+	}
+	return out;
+}
+
 function truthy(v: unknown): boolean {
 	if (v == null || v === false || v === 0 || v === "") return false;
 	if (typeof v === "number" && Number.isNaN(v)) return false;

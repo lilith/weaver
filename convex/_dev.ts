@@ -207,18 +207,11 @@ export const deleteWorld = internalMutation({
       }
       counts.chat_threads = (counts.chat_threads ?? 0) + threadsHere.length;
 
-      // Flows + events scoped by branch/character.
+      // Flows scoped by branch/character. Events table was removed
+      // during Wave-0 — no events to clean.
       const flows = await ctx.db.query("flows").collect();
       const flowsHere = flows.filter((f) => f.branch_id === b._id);
-      for (const f of flowsHere) {
-        const events = await ctx.db
-          .query("events")
-          .withIndex("by_flow_index", (q) => q.eq("flow_id", f._id))
-          .collect();
-        for (const e of events) await ctx.db.delete(e._id);
-        counts.events = (counts.events ?? 0) + events.length;
-        await ctx.db.delete(f._id);
-      }
+      for (const f of flowsHere) await ctx.db.delete(f._id);
       counts.flows = (counts.flows ?? 0) + flowsHere.length;
 
       // Art queue scoped by branch.

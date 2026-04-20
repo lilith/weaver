@@ -6,7 +6,7 @@
 // "create_location OR narrate." Good enough to prove the magic. Full
 // pipeline lands in Wave 1.
 
-import { action, internalMutation, internalQuery } from "./_generated/server.js";
+import { action, internalAction, internalMutation, internalQuery } from "./_generated/server.js";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api.js";
 import Anthropic from "@anthropic-ai/sdk";
@@ -83,8 +83,8 @@ export const expandFromFreeText = action({
     });
 
     const text = response.content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
       .join("")
       .trim();
 
@@ -512,7 +512,7 @@ export const prefetchContext = internalQuery({
 });
 
 /** The actual Opus call — scheduled from ensurePrefetched. */
-export const runPrefetch = action({
+export const runPrefetch = internalAction({
   args: {
     session_token: v.string(),
     world_id: v.id("worlds"),
@@ -565,8 +565,8 @@ export const runPrefetch = action({
     });
 
     const text = response.content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
       .join("")
       .trim();
 

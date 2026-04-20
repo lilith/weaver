@@ -12,13 +12,15 @@ import {
   utf8Encode,
 } from "@weaver/engine/blobs";
 
+// Loose ctx shape for use from any Convex mutation/action. Uses `any`
+// on the db methods rather than hand-rolling matching signatures — the
+// real Convex GenericMutationCtx has overloaded methods with option
+// bags our hand-rolled types can't express. Callers pass `ctx` and
+// TypeScript on the outside wall does the real validation; inside
+// blobs.ts the helpers just need `db.query / db.insert / db.patch /
+// db.get` available.
 type BlobCtx = {
-  db: {
-    query: (name: "blobs") => any;
-    insert: (name: "blobs", row: Omit<Doc<"blobs">, "_id" | "_creationTime">) => Promise<unknown>;
-    patch: (id: unknown, fields: Partial<Doc<"blobs">>) => Promise<void>;
-    get: (id: unknown) => Promise<Doc<"blobs"> | null>;
-  };
+  db: any;
 };
 
 /** Write bytes as a content-addressed blob. Idempotent by hash. */

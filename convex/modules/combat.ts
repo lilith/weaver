@@ -27,7 +27,8 @@
 import type { ModuleDef } from "@weaver/engine/flows";
 
 type CombatState = {
-  enemy_slug: string;
+  // Optional: caller may describe enemy by slug, name, or both.
+  enemy_slug?: string;
   enemy_name?: string;
   enemy_hp: number;
   enemy_max_hp: number;

@@ -15,6 +15,7 @@ import type * as auth from "../auth.js";
 import type * as blobs from "../blobs.js";
 import type * as characters from "../characters.js";
 import type * as cli from "../cli.js";
+import type * as crons from "../crons.js";
 import type * as diagnostics from "../diagnostics.js";
 import type * as effects from "../effects.js";
 import type * as expansion from "../expansion.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   blobs: typeof blobs;
   characters: typeof characters;
   cli: typeof cli;
+  crons: typeof crons;
   diagnostics: typeof diagnostics;
   effects: typeof effects;
   expansion: typeof expansion;

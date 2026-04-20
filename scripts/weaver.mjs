@@ -583,6 +583,13 @@ function renderLook(d) {
     const tag = o.target ? ` → ${o.target}` : "";
     const cond = o.condition ? `   if: ${o.condition}` : "";
     lines.push(`  [${mark}] ${o.index}. ${o.label}${tag}${cond}`);
+    // Dry-run reason for hidden options — Claude reads the paths + their
+    // current values and sees why without parsing the expression.
+    if (!o.visible && o.hidden_because?.refs?.length) {
+      for (const r of o.hidden_because.refs) {
+        lines.push(`        ${r.path} = ${JSON.stringify(r.value)}`);
+      }
+    }
   }
   const t = d.world_state?.time;
   if (t)

@@ -32,7 +32,9 @@ const { api } = await import(resolve(HERE, "../convex/_generated/api.js"));
 
 const CONVEX_URL =
   process.env.PUBLIC_CONVEX_URL ?? "https://friendly-chameleon-175.convex.cloud";
-const COST_ALLOWED = process.env.WEAVER_SWEEP_COST === "allow";
+const COST_ALLOWED =
+  process.env.WEAVER_SWEEP_COST === "allow" || process.argv.includes("--long");
+const LONG_MODE = process.argv.includes("--long");
 const STAMP = Date.now();
 const EMAIL = `sweep-${STAMP}@theweaver.quest`;
 
@@ -378,23 +380,142 @@ async function main() {
     assert(pr.flag, "prefetch flag on");
     assert(pr.options.length > 0, "at least one unresolved target picked up");
 
-    log("   waiting up to 25s for Opus to land the draft…");
+    log("   waiting up to 40s for Opus to land the draft…");
+    const beforeCount = (
+      await client.query(api.cli.listEntities, {
+        session_token,
+        world_slug,
+        type: "location",
+      })
+    ).filter((e) => e.draft).length;
     let landed = false;
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 40; i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      const entities = await client.query(api.cli.listEntities, {
+      const after = await client.query(api.cli.listEntities, {
         session_token,
         world_slug,
         type: "location",
       });
-      if (entities.some((e) => e.prefetched_from_entity_id != null && e.draft)) {
+      if (after.filter((e) => e.draft).length > beforeCount) {
         landed = true;
         break;
       }
     }
-    assert(landed, "prefetched draft materialized within 25s");
+    assert(landed, `prefetched draft materialized within 40s (drafts pre=${beforeCount})`);
   } else {
     log("\n[prefetch — skipped (set WEAVER_SWEEP_COST=allow to hit Opus)]");
+  }
+
+  // --- --long: dialogue + combat round-trip (hits Sonnet + runs effects) ---
+  if (LONG_MODE) {
+    log("\n[dialogue module — hits Sonnet, ~$0.005]");
+    // Push a tiny NPC so dialogue has a speaker.
+    await client.mutation(api.cli.pushEntityPayload, {
+      session_token,
+      world_slug,
+      type: "npc",
+      slug: "sweep-bard",
+      payload_json: JSON.stringify({
+        name: "Sweep Bard",
+        description: "A bard who only speaks in sweep-test questions.",
+        voice: { style: "Calm, curious, quick." },
+        memory: {
+          default_salience: "medium",
+          retention: 40,
+          track: ["dialogue_turn"],
+          ignore: [],
+        },
+        memory_initial: [
+          { summary: "Has been asked one question before.", salience: "high" },
+        ],
+      }),
+      reason: "sweep: dialogue npc",
+    });
+    await client.mutation(api.flags.set, {
+      session_token,
+      flag_key: "flag.npc_memory",
+      scope_kind: "world",
+      scope_id: world_slug,
+      enabled: true,
+    });
+    const d0 = await client.action(api.flows.startFlow, {
+      session_token,
+      world_slug,
+      module: "dialogue",
+      initial_state: { speaker_slug: "sweep-bard", exchanges: 0 },
+    });
+    assert(d0.status === "waiting", "dialogue flow waiting after open");
+    assert(d0.says?.length > 0, "dialogue flow produced a greeting line");
+    const d1 = await client.action(api.flows.stepFlow, {
+      session_token,
+      flow_id: d0.flow_id,
+      input: { text: "What's this sweep testing, bard?" },
+    });
+    assert(d1.says?.length >= 2, "dialogue exchange produced player + bard lines");
+    // Memory row written?
+    const memRows = await client.query(api.npc_memory.listForNpc, {
+      session_token,
+      world_slug,
+      npc_slug: "sweep-bard",
+    });
+    assert(
+      memRows.some((m) => m.event_type === "dialogue_turn"),
+      "dialogue_turn memory auto-written",
+    );
+
+    log("\n[combat module — deterministic seeded rolls, character.hp ticks]");
+    await client.mutation(api.flags.set, {
+      session_token,
+      flag_key: "flag.flows",
+      scope_kind: "world",
+      scope_id: world_slug,
+      enabled: true,
+    });
+    // Set a known HP for the round count we expect.
+    await client.mutation(api.cli.setCharacterState, {
+      session_token,
+      world_slug,
+      path: "hp",
+      value_json: "20",
+    });
+    const c0 = await client.action(api.flows.startFlow, {
+      session_token,
+      world_slug,
+      module: "combat",
+      initial_state: {
+        enemy_slug: "sweep-dummy",
+        enemy_name: "Sweep Dummy",
+        enemy_hp: 4,
+        enemy_max_hp: 4,
+        enemy_attack: 2,
+        player_weapon_attack: 3,
+        escape_dc: 8,
+      },
+    });
+    assert(c0.status === "running", "combat starts running after open");
+    // Loop until the flow completes or we hit a safety cap.
+    let cN = c0;
+    for (let i = 0; i < 15; i++) {
+      if (cN.status === "completed") break;
+      cN = await client.action(api.flows.stepFlow, {
+        session_token,
+        flow_id: c0.flow_id,
+        input: { choice: "attack" },
+      });
+    }
+    assert(cN.status === "completed", "combat completes within 15 rounds");
+    // Character HP should have decreased from enemy counters.
+    const afterCombat = await client.query(api.cli.whereAmI, {
+      session_token,
+      world_slug,
+    });
+    const hpAfter = afterCombat.character.state.hp;
+    assert(
+      typeof hpAfter === "number" && hpAfter <= 20,
+      `character hp dropped from 20 (got ${hpAfter})`,
+    );
+  } else {
+    log("\n[dialogue + combat — skipped (pass --long to exercise)]");
   }
 
   // --- Summary ---

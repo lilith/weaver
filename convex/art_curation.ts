@@ -269,7 +269,7 @@ export const runGenVariant = internalAction({
       const result: any = await fal.subscribe(FLUX_MODEL, {
         input: {
           prompt,
-          image_size: size,
+          image_size: size as any, // MODE_SIZES returns a subset of fal's ImageSize union
           num_inference_steps: 4,
           num_images: 1,
           enable_safety_checker: true,

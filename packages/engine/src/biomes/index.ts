@@ -12,7 +12,7 @@ export type BiomePalette = {
 };
 
 const BY_SLUG = new Map<string, BiomePalette>(
-	(palettes.palettes as BiomePalette[]).map((p) => [p.slug, p]),
+	(palettes.palettes as unknown as BiomePalette[]).map((p) => [p.slug, p]),
 );
 
 /** Look up a palette by biome slug. Returns null when no override is known

@@ -10,7 +10,11 @@ export default defineConfig({
 	testDir: "./tests",
 	fullyParallel: false,
 	forbidOnly: !!process.env.CI,
-	retries: 0,
+	// Node 24 undici occasionally throws `TypeError: fetch failed` on
+	// SSR loads to the Convex dev deployment under parallel Playwright
+	// load. We also patch convex.ts to retry once internally; this is
+	// the belt-and-braces layer for cases the inner retry misses.
+	retries: 2,
 	workers: 1,
 	reporter: [["list"]],
 	timeout: 30_000,

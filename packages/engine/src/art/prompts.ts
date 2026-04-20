@@ -33,11 +33,10 @@ function styleFragment(ctx: ArtPromptCtx): string {
 }
 
 function descFor(ctx: ArtPromptCtx, locFallback = false): string {
-  return (
-    ctx.entity.description ??
-    (locFallback ? ctx.entity.establishing_shot_prompt ?? "" : "") ??
-    ""
-  );
+  if (ctx.entity.description) return ctx.entity.description;
+  if (locFallback && ctx.entity.establishing_shot_prompt)
+    return ctx.entity.establishing_shot_prompt;
+  return "";
 }
 
 export const MODE_PROMPTS: Record<string, (ctx: ArtPromptCtx) => string> = {

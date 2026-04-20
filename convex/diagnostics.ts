@@ -143,6 +143,51 @@ export const listBugs = query({
   },
 });
 
+/** Weekly cron — GC resolved/stale bugs.
+ *   - `info` severity older than 7 days last_seen_at: delete.
+ *   - `warn`/`error` older than 30 days last_seen_at: delete.
+ *  Bugs still firing (last_seen_at recent) are kept regardless of
+ *  seen_count so the surface stays useful for current issues. */
+export const gcRuntimeBugs = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    const infoCutoff = now - sevenDays;
+    const warnCutoff = now - thirtyDays;
+
+    const rows = await ctx.db.query("runtime_bugs").collect();
+    let infoDeleted = 0,
+      warnDeleted = 0,
+      errorDeleted = 0,
+      kept = 0;
+    for (const r of rows) {
+      const age = r.last_seen_at;
+      if (r.severity === "info" && age < infoCutoff) {
+        await ctx.db.delete(r._id);
+        infoDeleted++;
+      } else if (
+        (r.severity === "warn" || r.severity === "error") &&
+        age < warnCutoff
+      ) {
+        await ctx.db.delete(r._id);
+        if (r.severity === "warn") warnDeleted++;
+        else errorDeleted++;
+      } else {
+        kept++;
+      }
+    }
+    return {
+      info_deleted: infoDeleted,
+      warn_deleted: warnDeleted,
+      error_deleted: errorDeleted,
+      kept,
+      ran_at: now,
+    };
+  },
+});
+
 /** Owner-only: delete all bugs for a world (after fixing them). */
 export const clearBugs = mutation({
   args: {

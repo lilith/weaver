@@ -150,11 +150,12 @@ export const set = mutation({
     // Permission per scope kind.
     if (scope_kind === "world") {
       if (!scope_id) throw new Error("world scope requires scope_id (world_slug)");
+      const wslug: string = scope_id;
       const world = await ctx.db
         .query("worlds")
-        .withIndex("by_slug", (q) => q.eq("slug", scope_id))
+        .withIndex("by_slug", (q) => q.eq("slug", wslug))
         .first();
-      if (!world) throw new Error(`world not found: ${scope_id}`);
+      if (!world) throw new Error(`world not found: ${wslug}`);
       if (world.owner_user_id !== user_id)
         throw new Error("forbidden: only world owner may set world-scoped flags");
       scope_id = world._id;
@@ -215,11 +216,12 @@ export const unset = mutation({
     // Same permission gate as set.
     if (scope_kind === "world") {
       if (!scope_id) throw new Error("world scope requires scope_id (world_slug)");
+      const wslug: string = scope_id;
       const world = await ctx.db
         .query("worlds")
-        .withIndex("by_slug", (q) => q.eq("slug", scope_id))
+        .withIndex("by_slug", (q) => q.eq("slug", wslug))
         .first();
-      if (!world) throw new Error(`world not found: ${scope_id}`);
+      if (!world) throw new Error(`world not found: ${wslug}`);
       if (world.owner_user_id !== user_id)
         throw new Error("forbidden: only world owner may unset world-scoped flags");
       scope_id = world._id;

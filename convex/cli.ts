@@ -21,6 +21,7 @@ import {
   advanceWorldTime,
   evalCondition,
   initWorldTime,
+  traceReferencedPaths,
 } from "@weaver/engine/clock";
 import { scheduleArtForEntity } from "./art.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
@@ -212,12 +213,21 @@ export const dumpLocation = query({
     const options = rawOpts.map((o, i) => {
       const hasCond = Boolean(o.condition);
       const visible = !hasCond || evalCondition(o.condition!, scope);
+      // When hidden, list the paths referenced + their current values
+      // so the reader can see why without parsing the expression.
+      const hidden_because = !visible && hasCond
+        ? {
+            condition: o.condition!,
+            refs: traceReferencedPaths(o.condition!, scope),
+          }
+        : null;
       return {
         index: i,
         label: o.label,
         target: o.target ?? null,
         condition: o.condition ?? null,
         condition_result: hasCond ? visible : null,
+        hidden_because,
         effect: o.effect ?? null,
         visible,
       };
