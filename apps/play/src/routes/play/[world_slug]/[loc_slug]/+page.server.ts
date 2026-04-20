@@ -77,6 +77,20 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 	if (!palette) palette = getBiomePalette((location as any).biome as string);
 	const paletteCss = palette ? paletteToCss(palette) : null;
 
+	// World-level theme — spec 10 ThemeSchema. Null when owner hasn't
+	// generated one yet; play page still renders with defaults +
+	// biome palette. Emits CSS vars (--theme-*) for the layout to use.
+	let themeCss: string | null = null;
+	try {
+		const theme = await client.query(api.themes.getActiveTheme, {
+			session_token: locals.session_token,
+			world_slug: params.world_slug
+		});
+		if (theme?.css) themeCss = theme.css;
+	} catch {
+		themeCss = null;
+	}
+
 	// Flag gate for the art-curation wardrobe. Falls back to the legacy
 	// art block when disabled. Resolve failures fail safe (flag off).
 	let artCurationEnabled = false;
@@ -130,6 +144,7 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		palette: palette
 			? { slug: palette.slug, name: palette.name, mood: palette.mood, css: paletteCss }
 			: null,
+		theme_css: themeCss,
 		closed_journey,
 		character_state: (character.state as Record<string, unknown>) ?? {},
 		// Art-curation integration surface. Client uses the reactive

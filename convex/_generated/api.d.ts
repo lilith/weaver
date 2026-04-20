@@ -36,6 +36,7 @@ import type * as narrative from "../narrative.js";
 import type * as npc_memory from "../npc_memory.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
+import type * as themes from "../themes.js";
 import type * as worlds from "../worlds.js";
 
 import type {
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   npc_memory: typeof npc_memory;
   seed: typeof seed;
   sessions: typeof sessions;
+  themes: typeof themes;
   worlds: typeof worlds;
 }>;
 

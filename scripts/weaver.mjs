@@ -300,6 +300,8 @@ async function dispatch() {
       return cmdBiome(rest);
     case "era":
       return cmdEra(rest);
+    case "theme":
+      return cmdTheme(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -2067,6 +2069,62 @@ async function cmdEra([sub, ...a]) {
     );
   }
   err("usage: weaver era [list|advance [hint...]|ack|catchup]", 2);
+}
+
+async function cmdTheme([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "show") {
+    const t = await client.query(ref("themes.getActiveTheme"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    if (!t) return out(null, () => "(no active theme — run: weaver theme generate)");
+    return out(
+      t,
+      (o) =>
+        `v${o.version} — ${o.spec.name}\n  ${o.spec.descriptor}\n  pace=${o.spec.motion.pace}  radius=${o.spec.atoms.radius_scale}  pair=${o.spec.typography.body_family} / ${o.spec.typography.heading_family}`,
+    );
+  }
+  if (sub === "list") {
+    const rows = await client.query(ref("themes.listThemes"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    return out(
+      rows,
+      (o) =>
+        o
+          .map(
+            (r) =>
+              `${r.active ? "*" : " "} v${r.version}  ${r.name}  —  ${r.descriptor}`,
+          )
+          .join("\n") || "(no themes yet)",
+    );
+  }
+  if (sub === "generate" || sub === "gen") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: theme generate is owner-only (or use --as)", 2);
+    const r = await client.action(ref("themes.generateTheme"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    return out(r, (o) => `theme v${o.version} generated — ${o.descriptor}`);
+  }
+  if (sub === "activate") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: theme activate is owner-only (or use --as)", 2);
+    const theme_id = a[0];
+    if (!theme_id) err("usage: weaver theme activate <theme_id>", 2);
+    const r = await client.mutation(ref("themes.setActiveTheme"), {
+      session_token: cfg.session_token,
+      world_slug,
+      theme_id,
+    });
+    return out(r, () => `activated ${theme_id}`);
+  }
+  err("usage: weaver theme [show|list|generate|activate <theme_id>]", 2);
 }
 
 // ---------------------------------------------------------------

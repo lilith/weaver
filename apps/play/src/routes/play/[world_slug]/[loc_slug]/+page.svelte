@@ -26,6 +26,9 @@
 </script>
 
 <svelte:head>
+	{#if data.theme_css}
+		{@html `<style id="world-theme">${data.theme_css}</style>`}
+	{/if}
 	{#if data.palette}
 		{@html `<style id="biome-palette">${data.palette.css}</style>`}
 	{/if}

@@ -333,7 +333,10 @@ export default defineSchema({
     version: v.number(),
     active: v.boolean(),
     created_at: v.number(),
-  }).index("by_world_active", ["world_id", "active"]),
+  })
+    .index("by_world_active", ["world_id", "active"])
+    .index("by_world_branch_active", ["world_id", "branch_id", "active"])
+    .index("by_world_branch_version", ["world_id", "branch_id", "version"]),
 
   // ---------------------------------------------------------------
   // Artifact version history (for rollback), blob-backed
