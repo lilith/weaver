@@ -36,8 +36,9 @@ test.describe("Weaver core loop", () => {
 		await expect(page).toHaveURL(/\/worlds$/);
 		await expect(page.getByRole("heading", { name: /your worlds/i })).toBeVisible();
 
-		// Fresh user has zero worlds — seed.
-		await page.getByLabel(/character/i).fill("Testbed");
+		// Fresh user has zero worlds — two-step seed flow: tile then name.
+		await page.getByRole("button", { name: /the quiet vale/i }).click();
+		await page.getByLabel(/character be called/i).fill("Testbed");
 		await page.getByRole("button", { name: /begin in the quiet vale/i }).click();
 
 		await expect(page).toHaveURL(/\/play\/quiet-vale-[a-z0-9]+\/village-square$/);

@@ -218,7 +218,18 @@ export function evalExpression(
 			if (peek()?.kind === "(") {
 				return callFunction(t.value);
 			}
-			return lookupPath(scope, t.value);
+			// Bracket-subscript chain: `x[key]...[key]` for hyphenated
+			// keys that can't be dot-paths. Mix with further dots via
+			// the existing lookupPath on the initial ident.
+			let cur: unknown = lookupPath(scope, t.value);
+			while (peek()?.kind === "[") {
+				consume("[");
+				const key = parseTernary();
+				consume("]");
+				if (cur == null) return undefined;
+				cur = (cur as Record<string, unknown>)[String(key)];
+			}
+			return cur;
 		}
 		throw new Error(`unexpected token ${t.kind}`);
 	}
@@ -372,6 +383,8 @@ type Token =
 	| { kind: "ident"; value: string }
 	| { kind: "(" }
 	| { kind: ")" }
+	| { kind: "[" }
+	| { kind: "]" }
 	| { kind: "," }
 	| { kind: "?" }
 	| { kind: ":" }
@@ -388,7 +401,7 @@ function tokenize(src: string): Token[] {
 			i++;
 			continue;
 		}
-		if (c === "(" || c === ")") {
+		if (c === "(" || c === ")" || c === "[" || c === "]") {
 			out.push({ kind: c });
 			i++;
 			continue;
