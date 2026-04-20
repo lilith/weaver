@@ -16,6 +16,20 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 	});
 	if (!location) throw error(404, `Location "${params.loc_slug}" not found.`);
 
+	// Speculative prefetch — fire-and-forget. ensurePrefetched scans
+	// this location's unresolved-target options and schedules Opus
+	// warm-ups in the background. Dedupes via findPrefetchedDraft, so
+	// safe to call on every navigation. By the time the player taps
+	// a bare-target option, a draft is often already waiting and the
+	// transition is instant instead of a 5-8s Opus stall.
+	void client
+		.action(api.expansion.ensurePrefetched, {
+			session_token: locals.session_token,
+			world_id: world._id,
+			location_slug: params.loc_slug
+		})
+		.catch(() => {});
+
 	// Journey-close handoff after a redirect — the cookie was set by the
 	// previous action's pick/expand handler. One-shot.
 	let closed_journey = null;
@@ -188,9 +202,47 @@ export const actions: Actions = {
 			}
 			redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
 		}
-		// If the option pointed at a slug that doesn't exist yet, chain
-		// into the expansion loop so the click actually goes somewhere.
+		// If the option pointed at a slug that doesn't exist yet, route
+		// through the streaming expansion — the client subscribes and
+		// watches prose arrive instead of blocking on a silent 5-8s
+		// Opus call. Falls back to the one-shot path when the streaming
+		// flag is off for this world.
 		if (result.needs_expansion?.hint) {
+			let streamingOn = false;
+			try {
+				const resolved = await client.query(api.flags.resolve, {
+					session_token: locals.session_token,
+					flag_key: "flag.expansion_streaming",
+					world_slug: params.world_slug
+				});
+				streamingOn = !!(resolved as { enabled?: boolean })?.enabled;
+			} catch {
+				streamingOn = false;
+			}
+			if (streamingOn) {
+				try {
+					const { stream_id } = await client.action(
+						api.expansion.startStreamingExpansion,
+						{
+							session_token: locals.session_token,
+							world_id: world._id,
+							location_slug: params.loc_slug,
+							input: result.needs_expansion.hint
+						}
+					);
+					return {
+						says: result.says,
+						stream: {
+							id: stream_id,
+							session_token: locals.session_token,
+							world_slug: params.world_slug
+						},
+						closed_journey
+					};
+				} catch {
+					/* fall through to one-shot */
+				}
+			}
 			let expanded;
 			try {
 				expanded = await client.action(api.expansion.expandFromFreeText, {

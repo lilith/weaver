@@ -4,6 +4,11 @@
 	import StreamingPanel from '$lib/expansion/StreamingPanel.svelte';
 	let { data, form } = $props();
 	let expanding = $state(false);
+	// Per-option pick in flight — the original_index of the option
+	// whose form is currently posting. Stays set during the
+	// server→Opus→redirect round-trip so the tapped button shows a
+	// spinner instead of appearing dead.
+	let pickingIdx = $state<number | null>(null);
 	let inputEl = $state<HTMLTextAreaElement | undefined>();
 
 	// Which dreams from the closed journey is the player keeping.
@@ -239,11 +244,40 @@
 		 block. Options first, weave textarea directly below; narrations
 		 don't interrupt the action region. -->
 	<section class="space-y-3">
+		{#if form?.stream}
+			<!-- pick → needs_expansion routed through streaming. Prose
+				 arrives live; the panel navigates when a result_slug
+				 lands. Removes the dead 5-8s silence the old inline
+				 one-shot path used to have. -->
+			<StreamingPanel
+				streamId={form.stream.id}
+				sessionToken={form.stream.session_token}
+				worldSlug={form.stream.world_slug}
+			/>
+		{/if}
 		{#each data.location.options as option (option.original_index ?? option.label)}
-			<form method="POST" action="?/pick" use:enhance>
+			<form
+				method="POST"
+				action="?/pick"
+				use:enhance={() => {
+					pickingIdx = option.original_index ?? 0;
+					return async ({ update }) => {
+						await update({ reset: true });
+						pickingIdx = null;
+					};
+				}}
+			>
 				<input type="hidden" name="option_index" value={option.original_index ?? 0} />
-				<button type="submit" class="choice-button">
-					<span class="mr-3 text-rose-400">❖</span>{option.label}
+				<button
+					type="submit"
+					class="choice-button"
+					disabled={pickingIdx !== null}
+				>
+					{#if pickingIdx === (option.original_index ?? 0)}
+						<span class="weave-spinner mr-3"></span>
+					{:else}
+						<span class="mr-3 text-rose-400">❖</span>
+					{/if}{option.label}
 				</button>
 			</form>
 		{/each}
