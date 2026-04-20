@@ -47,13 +47,48 @@ Weaver — browser-based, AI-supported, collaborative world-building game engine
 
 **Deployment model:** per-family instances. Each family gets its own deployment. Today that's one instance — Lilith's family. This collapses a lot of multi-tenant concerns (moderation scope, privacy isolation, cost attribution) into single-tenant per-instance. When the spec or you feel tempted to design around "public worlds" or "strangers in the same world," stop — that's not the shape of this product.
 
-## Current status
+## Current status (2026-04-20, end of Wave 1 Day ~3 equivalent)
 
-- **Wave 0 Day 2 done.** Playable loop live at https://theweaver.quest: magic-link sign-in → `/play` → rendered location → option taps move you between seeded locations. Backed by content-addressed blobs, BLAKE3-hashed, inline-only in Convex (R2 path lands with the art worker).
-- Seeded content: Quiet Vale tiny-world (bible, village biome, Mara character, village-square + mara-cottage locations) per `spec/AUTHORING_AND_SYNC.md`. Reseed with `npx convex run 'seed:seedTinyWorld' '{"owner_email":"you@example.com"}'` — idempotent on slug.
-- Auth is a minimal Convex-native magic-link (action → Resend email → cookie session); Better Auth swap deferred until we actually need OAuth / 2FA / password. Sessions + auth_tokens live in-schema.
-- Next natural slices: Day 3 NPC chat + dialogue flow; Day 4 art pipeline (fal.ai → R2 blob path wired); Day 5+ world-bible builder UI; expansion loop (intent classifier → 8 atoms).
-- Spec-review session landed 2026-04-19; course corrections in the URGENT block at the top of this file. Apply them before Day 3.
+**Live at https://theweaver.quest.** Full core loop shipped and playable:
+magic-link sign-in → worlds list → /play/[world]/[loc] → pick/weave/
+save-to-map → journal. Five-person household pre-authed to shared Quiet
+Vale. The Office imported from backstory extraction (43 entities, 23
+FLUX scene arts queued).
+
+**Shipped capability shifts (of the 5 in `spec/20_POSTER_CHILD_CAPABILITIES.md`):**
+- Ask 3 — **world clock** done. branches.state carries
+  `{ time: {iso, hhmm, day_of_week, day_counter, week_counter,
+  tick_minutes}, turn }`. Turn-end tick on every applyOption. Option
+  `condition:` strings evaluated server-side via a minimal safe
+  expression grammar (==, !=, <, <=, >, >=, &&, ||, !, path lookup,
+  string/number/bool literals). Conditionally-hidden options filter
+  correctly; each returned option carries `original_index` so picks
+  still resolve unambiguously.
+- Ask 5 — **shared narrative prompt assembler** done.
+  `convex/narrative.ts` exposes `assembleNarrativePrompt` +
+  `internal.narrative.buildPrompt`. Cache_control on the world-bible
+  block means 90%-off every call after the first in a 5-min window.
+  Expansion already migrated.
+
+**Not yet shipped (next session):** Ask 1 (biome rules — spec 21),
+Ask 2 (item taxonomy — spec 22), Ask 4 (NPC memory).
+
+**Other shipped this session:** art pipeline (fal.ai FLUX.schnell →
+R2 blob → location page), AI journey summary (Sonnet on close),
+isolation-adversarial test catch-up (URGENT rule 7 — 12 scenarios
+covering every world-scoped mutation), cross-type relationship
+acceptance in the importer, inline-blob cap raised to 64KB for real
+payloads, custom-domain artz.theweaver.quest, household preauth +
+world ownership transfer to river.lilith@gmail.com as canonical
+primary.
+
+**Deferred per user:** per-location chat (spec defers a wave or two —
+"we're in the same room"). Quiet Vale→separate-repo backup still
+pending. FAL_KEY now has correct id:secret format.
+
+**UX_PROPOSALS.md** at the repo root is a running log of design
+tensions surfaced while building — 5 items so far. Review before
+Wave 2 shipping.
 
 ## Stack (locked)
 
