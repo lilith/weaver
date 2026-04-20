@@ -5,7 +5,21 @@ isn't obvious. Each item is a deferred decision for you, not for me.
 Format: **problem** · *how it showed up* · *what I'd do if forced* ·
 *proposed decision surface*.
 
-Last updated: *start of Ask 3 work, 2026-04-20*.
+Last updated: *2026-04-20, after async-sync direction call*.
+
+---
+
+### Direction (not a question — captured so the next session knows)
+
+**Campaign model: async by default, sync when it happens.** Full
+design in `spec/ASYNC_SYNC_PLAY.md`. TL;DR: clock advances with any
+actor; when someone logs in late, they see *"while you were gone…"*
+events and pick per-event "I was with them / I skipped it / tell me
+about it." Retroactive agency. Fun in 5-min slices *and* on
+family-LAN night.
+
+This replaces several potential designs (real-time MMO-ish,
+strict-turn-based, single-player-sandbox) and resolves UX-02 below.
 
 ---
 
@@ -34,26 +48,15 @@ Leaning **d** for long-term, **b** for Wave-2 default.
 
 ---
 
-### UX-02 · Who ticks the clock in a shared world
+### UX-02 · Who ticks the clock in a shared world — **RESOLVED**
 
-**Problem.** Clock advances per `applyOption` call. Lilith and Jason
-share one branch.state.time. If both are online tonight, whose turn
-advances the world? Race on write means the last writer wins; meaning
-wall-time passes at 2× (or Nx for N players) inside the world.
-
-*How it showed up.* Realized during clock design — tests are
-single-user so this hasn't bitten.
-
-*If forced.* Advance only when the **first** action in a real-wall-time
-window happens; cooldown subsequent ticks by N seconds. Or only
-advance on location-transition, not every option.
-
-*Decision surface.* (a) naive per-option tick (current) — fine for
-solo, weird for shared; (b) debounce: tick once per N wall-seconds
-regardless of callers; (c) tick only on location transition; (d) tick
-on a global cron independent of actions.
-
-Solo play is fine today. Flag for Wave 3 when shared play is actual.
+**Resolution (2026-04-20):** async-first campaign model — see
+`spec/ASYNC_SYNC_PLAY.md`. The world clock is monotonic and advances
+whenever any character acts; late-arriving players *catch up* via a
+catch-up panel ("Lilith went to the sewer — were you with her?").
+No race, no debouncing. Clock is a single shared monotonic counter;
+narrative threads are per-character with retroactive convergence.
+Kept here for provenance.
 
 ---
 

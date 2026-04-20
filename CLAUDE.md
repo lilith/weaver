@@ -71,6 +71,15 @@ Weaver — browser-based, AI-supported, collaborative world-building game engine
 
 **Deployment model:** per-family instances. Each family gets its own deployment. Today that's one instance — Lilith's family. This collapses a lot of multi-tenant concerns (moderation scope, privacy isolation, cost attribution) into single-tenant per-instance. When the spec or you feel tempted to design around "public worlds" or "strangers in the same world," stop — that's not the shape of this product.
 
+## Design direction: async + sync play
+
+**`spec/ASYNC_SYNC_PLAY.md`** — the multi-player shape. *Async by
+default, sync when it happens.* Clock is monotonic and advances on
+any action; late-arriving players see a catch-up panel with
+retroactive agency ("were you with them?" → portal in, or skip). This
+resolves several open design questions and defines Wave 2-3 multi-
+player surface. **Read before touching multi-player or clock code.**
+
 ## Current status (2026-04-20, end of Wave 1 Day ~3 equivalent)
 
 **Live at https://theweaver.quest.** Full core loop shipped and playable:
