@@ -12,7 +12,6 @@ type BaseCtx = {
   db: {
     query: (name: any) => any;
     get: (id: any) => Promise<any>;
-    patch: (id: any, fields: any) => Promise<void>;
   };
 };
 
@@ -33,7 +32,8 @@ export async function resolveSession(
     | Doc<"users">
     | null;
   if (!user) throw new Error("unauthenticated: user deleted");
-  await ctx.db.patch((row as Doc<"sessions">)._id, { last_used_at: Date.now() });
+  // Note: last_used_at touch skipped — can't patch from query ctx. When a
+  // mutation resolves the session it can opt into patching separately.
   return { user, user_id: user._id };
 }
 

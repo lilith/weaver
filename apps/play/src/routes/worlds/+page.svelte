@@ -6,8 +6,8 @@
 
 <section class="space-y-10 py-6">
 	<header class="space-y-2">
-		<h1 class="font-display text-4xl text-ink-900 sm:text-5xl">Your worlds</h1>
-		<p class="text-ink-700">
+		<h1 class="font-display text-4xl text-mist-100 sm:text-5xl">Your worlds</h1>
+		<p class="text-mist-400">
 			Each world is its own story. Start with a small seed; spin up more whenever you feel like
 			trying a new game.
 		</p>
@@ -22,13 +22,13 @@
 						class="story-card group flex items-center justify-between px-5 py-4 no-underline"
 					>
 						<div>
-							<div class="font-display text-xl text-ink-900">{world.name}</div>
-							<div class="text-xs uppercase tracking-wide text-ink-500">
+							<div class="font-display text-xl text-mist-100">{world.name}</div>
+							<div class="text-xs uppercase tracking-wide text-mist-600">
 								{world.role} · {world.slug}
 							</div>
 						</div>
 						<span
-							class="font-hand text-2xl text-accent-600 transition group-hover:translate-x-1"
+							class="font-hand text-2xl text-rose-400 transition group-hover:translate-x-1"
 						>
 							↝
 						</span>
@@ -40,7 +40,7 @@
 
 	<div class="story-card space-y-4 px-6 py-6">
 		<h2 class="font-display text-2xl">Start a new world</h2>
-		<p class="text-sm text-ink-700">
+		<p class="text-sm text-mist-400">
 			The <em>Quiet Vale</em> is a cozy starter: a small mountain village, a carpenter named Mara,
 			morning light and woodsmoke. Good for seeing the bones.
 		</p>
@@ -58,7 +58,7 @@
 			}}
 		>
 			<label class="block space-y-1">
-				<span class="text-sm text-ink-700">What should your character be called?</span>
+				<span class="text-sm text-mist-400">What should your character be called?</span>
 				<input
 					name="character_name"
 					placeholder="your name here (or leave blank)"

@@ -21,5 +21,5 @@ export const load: PageServerLoad = async ({ url, cookies }) => {
 	} catch (e) {
 		return { error: (e as Error).message };
 	}
-	throw redirect(303, "/play");
+	throw redirect(303, "/worlds");
 };

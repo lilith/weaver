@@ -19,16 +19,16 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const character_name = (form.get("character_name") as string | null) ?? undefined;
 		const client = convexServer();
+		let result;
 		try {
-			const result = await client.mutation(api.seed.seedStarterWorld, {
+			result = await client.mutation(api.seed.seedStarterWorld, {
 				session_token: locals.session_token,
 				template: "quiet-vale",
 				character_name: character_name?.trim() || undefined
 			});
-			throw redirect(303, `/play/${result.slug}`);
 		} catch (e) {
-			if ((e as any)?.status === 303) throw e;
 			return fail(500, { error: (e as Error).message });
 		}
+		redirect(303, `/play/${result.slug}`);
 	}
 };

@@ -1,4 +1,4 @@
-import { error, fail, redirect } from "@sveltejs/kit";
+import { error, fail, isRedirect, redirect } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
 import { convexServer } from "$lib/convex";
 import { api } from "$convex/_generated/api";
@@ -41,29 +41,34 @@ export const load: PageServerLoad = async ({ params, locals, parent }) => {
 };
 
 export const actions: Actions = {
-	pick: async ({ request, params, locals, parent }) => {
+	pick: async ({ request, params, locals }) => {
 		if (!locals.session_token) return fail(401, { error: "not signed in" });
 		const form = await request.formData();
 		const optionIndex = Number(form.get("option_index") ?? -1);
 		if (!Number.isInteger(optionIndex) || optionIndex < 0) {
 			return fail(400, { error: "bad option" });
 		}
-		const { world } = await parent();
 		const client = convexServer();
+		const world = await client.query(api.worlds.getBySlugForMe, {
+			session_token: locals.session_token,
+			slug: params.world_slug
+		});
+		if (!world) return fail(404, { error: "world not found" });
+
+		let result;
 		try {
-			const result = await client.mutation(api.locations.applyOption, {
+			result = await client.mutation(api.locations.applyOption, {
 				session_token: locals.session_token,
 				world_id: world._id,
 				location_slug: params.loc_slug,
 				option_index: optionIndex
 			});
-			if (result.new_location_slug) {
-				throw redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
-			}
-			return { says: result.says };
 		} catch (e) {
-			if ((e as any)?.status === 303) throw e;
 			return fail(500, { error: (e as Error).message });
 		}
+		if (result.new_location_slug) {
+			redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
+		}
+		return { says: result.says };
 	}
 };

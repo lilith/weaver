@@ -1,2 +1,283 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
+
+/* ====================================================================
+   Weaver — midnight loom
+   Dark, jewel-toned storybook. Deep bruised-purple base; lamp-gold
+   warmth; electric rose highlights; oxidized teal for secondary cues.
+   ==================================================================== */
+
+@theme {
+	/* Ink (background, deepest first) */
+	--color-ink-950: #0c0a18;
+	--color-ink-900: #141128;
+	--color-ink-800: #1a1634;
+	--color-ink-700: #241d47;
+	--color-ink-600: #342966;
+	--color-ink-500: #4b3a8a;
+
+	/* Velvet — panels, cards */
+	--color-velvet-800: #1f1a38;
+	--color-velvet-700: #2b244f;
+	--color-velvet-600: #3b3269;
+
+	/* Candlelight / gold */
+	--color-candle-200: #fde9b0;
+	--color-candle-300: #f9d57a;
+	--color-candle-400: #f3bb4a;
+	--color-candle-500: #e8a024;
+
+	/* Rose — primary accent, the "something is happening" color */
+	--color-rose-300: #ffb8c8;
+	--color-rose-400: #ff86a3;
+	--color-rose-500: #f05080;
+	--color-rose-600: #cc2d5e;
+
+	/* Teal — secondary, for hover / success / alive NPC */
+	--color-teal-300: #9ff4d9;
+	--color-teal-400: #5ce0b5;
+	--color-teal-500: #2dbd94;
+
+	/* Mist — text + dividers */
+	--color-mist-100: #fdf7e8;
+	--color-mist-200: #efe8d0;
+	--color-mist-400: #c6bbdb;
+	--color-mist-600: #8a7fac;
+	--color-mist-800: #564d78;
+
+	/* Typography */
+	--font-display: 'Cormorant Garamond', 'EB Garamond', Georgia, serif;
+	--font-serif: 'EB Garamond', 'Cormorant Garamond', Georgia, serif;
+	--font-hand: 'Caveat', cursive;
+	--font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+	/* Radii + shadows */
+	--radius-card: 0.875rem;
+	--radius-button: 0.75rem;
+	--shadow-panel: 0 2px 0 rgba(255, 255, 255, 0.02) inset,
+		0 20px 50px -20px rgba(0, 0, 0, 0.8),
+		0 0 0 1px rgba(159, 140, 210, 0.08);
+	--glow-rose: 0 0 40px rgba(240, 80, 128, 0.22);
+	--glow-candle: 0 0 32px rgba(232, 160, 36, 0.2);
+}
+
+html,
+body {
+	background: var(--color-ink-950);
+	color: var(--color-mist-100);
+	font-family: var(--font-serif);
+	font-size: 18px;
+	line-height: 1.68;
+	font-feature-settings: 'onum' 1, 'liga' 1, 'dlig' 1;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+body {
+	min-height: 100svh;
+	background-color: var(--color-ink-950);
+	background-image:
+		radial-gradient(ellipse 70% 55% at 18% 10%, rgba(240, 80, 128, 0.18), transparent 60%),
+		radial-gradient(ellipse 60% 45% at 82% 8%, rgba(232, 160, 36, 0.13), transparent 60%),
+		radial-gradient(ellipse 80% 60% at 50% 100%, rgba(45, 189, 148, 0.1), transparent 60%),
+		radial-gradient(circle at 50% 40%, rgba(75, 58, 138, 0.45), rgba(12, 10, 24, 0) 70%),
+		linear-gradient(180deg, #141128 0%, #0c0a18 55%, #0c0a18 100%);
+	background-attachment: fixed;
+}
+
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	background-image:
+		radial-gradient(1px 1px at 12% 22%, rgba(253, 247, 232, 0.4) 0, transparent 50%),
+		radial-gradient(1px 1px at 27% 71%, rgba(253, 213, 122, 0.35) 0, transparent 50%),
+		radial-gradient(1px 1px at 48% 34%, rgba(253, 247, 232, 0.35) 0, transparent 50%),
+		radial-gradient(1px 1px at 66% 14%, rgba(159, 244, 217, 0.3) 0, transparent 50%),
+		radial-gradient(1px 1px at 81% 55%, rgba(253, 247, 232, 0.3) 0, transparent 50%),
+		radial-gradient(1px 1px at 9% 83%, rgba(255, 184, 200, 0.3) 0, transparent 50%),
+		radial-gradient(1px 1px at 36% 91%, rgba(253, 247, 232, 0.25) 0, transparent 50%),
+		radial-gradient(1px 1px at 58% 77%, rgba(253, 213, 122, 0.28) 0, transparent 50%),
+		radial-gradient(1px 1px at 90% 28%, rgba(253, 247, 232, 0.28) 0, transparent 50%);
+	background-size: 100% 100%;
+	opacity: 0.7;
+	mix-blend-mode: screen;
+}
+
+::selection {
+	background: var(--color-rose-500);
+	color: var(--color-ink-950);
+}
+
+/* ============================================================
+   Components
+   ============================================================ */
+
+.story-card {
+	display: block;
+	color: inherit;
+	background: linear-gradient(145deg, rgba(43, 36, 79, 0.88), rgba(26, 22, 52, 0.9));
+	border: 1px solid rgba(159, 140, 210, 0.18);
+	border-radius: var(--radius-card);
+	box-shadow: var(--shadow-panel);
+	transition: transform 180ms ease, border-color 180ms ease, box-shadow 240ms ease;
+}
+.story-card:hover {
+	border-color: var(--color-rose-400);
+	transform: translateY(-1px);
+	box-shadow: var(--shadow-panel), var(--glow-rose);
+}
+
+.story-prose {
+	font-size: 1.125rem;
+	line-height: 1.75;
+	color: var(--color-mist-100);
+}
+.story-prose p { margin-bottom: 1.1rem; }
+
+.story-aside {
+	position: relative;
+	padding: 1rem 1.25rem 1rem 1.5rem;
+	color: var(--color-candle-200);
+	border-left: 3px solid var(--color-candle-400);
+	background: linear-gradient(to right, rgba(232, 160, 36, 0.08), rgba(232, 160, 36, 0));
+	border-radius: 0 0.5rem 0.5rem 0;
+	box-shadow: var(--glow-candle);
+}
+
+.storybook-input {
+	background: rgba(20, 17, 40, 0.7);
+	border: 1px solid rgba(159, 140, 210, 0.3);
+	border-radius: var(--radius-button);
+	color: var(--color-mist-100);
+	font-family: var(--font-serif);
+	font-size: 1.0625rem;
+	padding: 0.75rem 1rem;
+	outline: none;
+	min-height: 2.75rem;
+	transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.storybook-input::placeholder {
+	color: var(--color-mist-600);
+	font-style: italic;
+}
+.storybook-input:focus {
+	border-color: var(--color-rose-400);
+	background: rgba(20, 17, 40, 0.9);
+	box-shadow: 0 0 0 3px rgba(240, 80, 128, 0.18);
+}
+
+.storybook-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 2.75rem;
+	font-family: var(--font-display);
+	font-size: 1.125rem;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	color: var(--color-ink-950);
+	background: linear-gradient(180deg, var(--color-candle-300), var(--color-candle-500));
+	border: 1px solid rgba(12, 10, 24, 0.5);
+	border-radius: var(--radius-button);
+	padding: 0.6rem 1.5rem;
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset, 0 0 0 1px rgba(232, 160, 36, 0.4),
+		var(--glow-candle);
+	cursor: pointer;
+	transition: transform 100ms ease, filter 120ms ease, box-shadow 200ms ease;
+}
+.storybook-button:hover {
+	filter: brightness(1.05);
+	transform: translateY(-1px);
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 0 0 1px rgba(240, 80, 128, 0.4),
+		0 0 35px rgba(240, 80, 128, 0.35);
+}
+.storybook-button:active { transform: translateY(0); }
+.storybook-button:disabled {
+	opacity: 0.55;
+	cursor: default;
+	transform: none;
+	box-shadow: none;
+}
+
+.choice-button {
+	display: block;
+	width: 100%;
+	text-align: left;
+	min-height: 2.75rem;
+	font-family: var(--font-serif);
+	font-size: 1.0625rem;
+	color: var(--color-mist-100);
+	background: linear-gradient(145deg, rgba(43, 36, 79, 0.72), rgba(20, 17, 40, 0.9));
+	border: 1px solid rgba(159, 140, 210, 0.22);
+	border-radius: var(--radius-button);
+	padding: 0.85rem 1.15rem;
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 2px 14px rgba(0, 0, 0, 0.45);
+	cursor: pointer;
+	transition: border-color 160ms ease, background 160ms ease, transform 100ms ease,
+		box-shadow 180ms ease;
+}
+.choice-button:hover {
+	border-color: var(--color-teal-400);
+	background: linear-gradient(145deg, rgba(60, 51, 105, 0.85), rgba(32, 27, 67, 0.95));
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 2px 14px rgba(0, 0, 0, 0.45),
+		0 0 32px rgba(92, 224, 181, 0.14);
+}
+.choice-button:focus-visible {
+	outline: none;
+	border-color: var(--color-rose-400);
+	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 0 0 3px rgba(240, 80, 128, 0.24);
+}
+.choice-button:active { transform: translateY(1px); }
+
+.ornate-divider {
+	border: 0;
+	height: 26px;
+	background:
+		radial-gradient(
+				circle at center,
+				var(--color-rose-500) 0,
+				var(--color-rose-500) 3px,
+				transparent 3px
+			)
+			center / 26px 26px no-repeat,
+		linear-gradient(
+				to right,
+				transparent 0,
+				transparent calc(50% - 50px),
+				var(--color-rose-500) calc(50% - 50px),
+				var(--color-rose-500) calc(50% - 14px),
+				transparent calc(50% - 14px),
+				transparent calc(50% + 14px),
+				var(--color-rose-500) calc(50% + 14px),
+				var(--color-rose-500) calc(50% + 50px),
+				transparent calc(50% + 50px)
+			)
+			center / 100% 1px no-repeat;
+	opacity: 0.7;
+	filter: drop-shadow(0 0 6px rgba(240, 80, 128, 0.45));
+}
+
+.handwritten {
+	font-family: var(--font-hand);
+	color: var(--color-candle-300);
+	font-size: 1.25rem;
+}
+
+a {
+	color: var(--color-teal-400);
+	text-decoration: underline;
+	text-decoration-color: rgba(92, 224, 181, 0.35);
+	text-underline-offset: 3px;
+}
+a:hover {
+	color: var(--color-rose-400);
+	text-decoration-color: var(--color-rose-400);
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-rose-400);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
