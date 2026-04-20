@@ -124,3 +124,58 @@ sub-line in smaller mist-600.
 *Decision surface.* Future polish — not blocking anything.
 
 ---
+
+### UX-06 · `ambient_effects[].chance` spec/runtime drift
+
+**Problem.** `spec/21_BIOME_RULES.md` documents a `chance: 0.3` field on
+ambient effect entries for probabilistic firing. The runtime in
+`convex/locations.ts` only uses `every_n_turns` modulo-match; `chance`
+is silently ignored. Surfaced by the 2026-04-20 content-upgrade agent.
+
+*If forced.* Implement: `if (every > 0 && nextTurn % every === 0 &&
+(amb.chance === undefined || ctx.rng() < amb.chance))`. Uses the
+existing seeded RNG (flow_id|step_id|turn) for determinism.
+
+*Decision surface.* (a) ship the runtime hook to match the spec;
+(b) remove `chance` from the spec. Leaning **a**.
+
+---
+
+### UX-07 · `memory_initial[]` lacks `event_type`
+
+**Problem.** NPC memory seeds are `{summary, salience}` only. At prompt
+assembly, seeds are always included; they can't be filtered by the
+`memory.track` / `memory.ignore` fields that filter live-written rows.
+Not blocking today, but visible when a playtest session accumulates
+dozens of live rows and the seeds drown in recency-ranked noise.
+
+*Decision surface.* (a) add optional `event_type` to seeds; (b) leave
+seeds always-included on the theory they're small-count by construction.
+
+---
+
+### UX-08 · Biome "safe-zone" primitive
+
+**Problem.** Quiet Vale's village, The Office's apartment / coffee-shop
+/ diner are thematically sanctuaries. Runtime doesn't know that — they
+are indistinguishable from any mundane biome. A player fleeing the
+office-dungeon into the apartment should feel the shift.
+
+*If forced.* Add `rules.sanctuary: true` as a biome hint; interpreted by
+future modules (combat, wellness ticks) as "no damage, hp regen, anxiety
+decay." For v1 the interpretation can be documentary.
+
+---
+
+### UX-09 · `--as <email>` + world-scoping in the CLI
+
+**Problem.** Both content-upgrade agents (2026-04-20) hit the same
+sequencing bug: `--as river.lilith@gmail.com world use the-office`
+followed by `--as ... sync ...` failed because `--as` creates a fresh
+ephemeral session; `world_slug` doesn't persist across invocations.
+Workaround: `--world <slug>` inline with `sync`.
+
+*If forced.* Either (a) `--as` implicitly re-establishes the previously-
+active world per impersonated-email, or (b) `sync`/`push` always accept
+`--world` and the docs make that the canonical path when `--as` is in
+play. Leaning **b**. Trivial to land.

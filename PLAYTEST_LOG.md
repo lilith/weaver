@@ -112,3 +112,42 @@ biomes, `kind:` to items, `memory:` blocks to NPCs). Agents can do
 this via the export/edit/sync loop ratified this session.
 
 25/25 isolation-adversarial tests green against the new surfaces.
+
+---
+
+## 2026-04-20 — Wave-2 content-upgrade pass (two parallel agents)
+
+**Participants:** two content-upgrade agents (one per world), impersonating `river.lilith@gmail.com` via `--as` for owner-gated sync. No human players.
+**Duration:** ~10 min wall, end-to-end.
+**Worlds:**
+  - `quiet-vale-f96pf4` (cozy family world)
+  - `the-office` (43-entity Argus-extraction dungeon)
+**Feature flag state:** all Wave-2 flags on for both.
+
+### What landed
+
+**Quiet Vale:** 1/1 authored biome (`village`) gained a conservative `rules:` block — `time_dilation: 1` + one ambient-say every 17 turns, tonal only. No NPCs or items exist; no other upgrades.
+
+**The Office:**
+- 7/7 biomes gained per-biome `rules:` tuned to tone: safe zones (`apartment-interior`, `coffee-shop`, `diner`) get flavor-only; outer office-dungeon gets `time_dilation: 160`, fatigue ambient every 10 turns + exposure counter; deep office-dungeon gets 240x dilation + denser ambient cadence; sky-spire gets 120x + slip damage every 8. Every ambient `every_n_turns >= 6` to avoid chip-damage nags.
+- 7/7 NPCs gained `memory:` config (medium default, retention 40, track [dialogue_turn, the_player_visited]) + 3 seeds each, every seed grounded in the NPC's existing `description`/`knows`/`sample_lines` — no invented facts.
+- 0 items upgraded — The Office doesn't yet have first-class item entities; items are implicit in location `canonical_features`. Extracting them into standalone items is out of scope for this pass.
+- 0 characters touched — spec 24 `memory:` primarily models NPC-remembers-player; adding to a PC would pollute dialogue assembly.
+
+### Spec/runtime gaps surfaced by the agents
+
+1. **`ambient_effects[].chance` is documented in `spec/21_BIOME_RULES.md` but not honored by the runtime.** `convex/locations.ts` only uses the `every_n_turns` modulo match. Authors who write `chance: 0.3` get 1.0 in practice. Options: implement the chance gate, or remove from spec. UX_PROPOSALS candidate.
+2. **`memory_initial[]` has no `event_type` field.** Seeds are summary-only, so `memory.track` / `memory.ignore` filters can't apply to seeds — they're always injected. Fine for Wave 2; add when playtest shows seeds are being over-prioritized.
+3. **No "safe-zone" primitive.** Apartments, coffee-shops, diners are thematically sanctuaries; currently indistinguishable from any mundane biome with no rules. Candidate for `rules.sanctuary: true`.
+
+### CLI UX gap (fixable)
+
+Both agents hit the same sequencing bug: `--as river.lilith@gmail.com world use <slug>` doesn't persist `world_slug` for a subsequent `--as ... sync ...` call, because `--as` is ephemeral (new session per invocation). Agents both worked around by passing `--world <slug>` inline to `sync`. Fix: `sync` and `push` should always accept `--world` and prefer it over config when `--as` is present.
+
+### Verdict
+
+Content now materially uses the Wave-2 capabilities. Next session plays in these worlds will demonstrably diverge from pre-upgrade play:
+- Entering the office-dungeon will tick clock ~3 hours per turn, hit fatigue damage every ~10 turns, accumulate `this.exposure` — the spec's headline "fluorescent corporate hellscape" now has teeth.
+- Talking to Frank/Ganesh/Lily will seed prompts with 3 grounded memory seeds each — Mara-cradle echo test should repeat at NPC scale.
+
+No commits to git — all changes are Convex artifact_versions. Quiet Vale's +1 version bump on its `village` biome is the only materially-different on-chain change; The Office took 42 no-op version bumps due to the sync path re-pushing every file (payload-byte-equality check not yet implemented). Cosmetic, not a bug.
