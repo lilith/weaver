@@ -33,6 +33,36 @@ async function readAuthoredPayload<T>(
   return readJSONBlob<T>(ctx, version.blob_hash);
 }
 
+/** Load a biome's rules block by slug. Returns null if the biome entity
+ *  isn't found or has no rules (that's the common case for imported
+ *  worlds whose biomes haven't been upgraded yet). */
+async function loadBiomeRules(
+  ctx: any,
+  branch_id: Id<"branches">,
+  slug: string,
+): Promise<{
+  time_dilation?: number;
+  on_enter_biome?: any[];
+  on_leave_biome?: any[];
+  on_turn_in_biome?: any[];
+  ambient_effects?: any[];
+  spawn_tables?: Record<string, string[]>;
+} | null> {
+  const biome = await ctx.db
+    .query("entities")
+    .withIndex("by_branch_type_slug", (q: any) =>
+      q.eq("branch_id", branch_id).eq("type", "biome").eq("slug", slug),
+    )
+    .first();
+  if (!biome) return null;
+  try {
+    const payload = await readAuthoredPayload<any>(ctx, biome);
+    return (payload?.rules ?? null) as any;
+  } catch {
+    return null;
+  }
+}
+
 async function loadBranch(ctx: any, world_id: Id<"worlds">) {
   const world = await ctx.db.get(world_id);
   if (!world?.current_branch_id) throw new Error("world has no current branch");
@@ -287,6 +317,63 @@ export const applyOption = mutation({
       closedJourneyId = j.closed_journey_id;
     }
 
+    // --- Biome rules (Ask 1, spec 21, flag.biome_rules) ---
+    // Must run BEFORE the character.state patch so hook-driven mutations
+    // to state + thisScope land in the same patch as option effects.
+    // Fire lifecycle hooks on biome transitions + each-turn hooks +
+    // ambient effects. Dilation from the effective (new if changed else
+    // current) biome drives clock advance.
+    let dilation = 1;
+    if (flags.biome_rules) {
+      const originBiome = (payload as any).biome as string | undefined;
+      let effectiveBiomeSlug = originBiome;
+      let biomeChanged = false;
+      if (newLocationEntity) {
+        try {
+          const newPayload = await readAuthoredPayload<any>(ctx, newLocationEntity);
+          const newBiome = newPayload?.biome as string | undefined;
+          if (newBiome && newBiome !== originBiome) {
+            biomeChanged = true;
+            // on_leave_biome (origin)
+            if (originBiome) {
+              const originRules = await loadBiomeRules(ctx, branch_id, originBiome);
+              if (originRules?.on_leave_biome)
+                await applyEffects(ctx, originRules.on_leave_biome, exec);
+            }
+            // on_enter_biome (new)
+            const newRules = await loadBiomeRules(ctx, branch_id, newBiome);
+            if (newRules?.on_enter_biome)
+              await applyEffects(ctx, newRules.on_enter_biome, exec);
+            effectiveBiomeSlug = newBiome;
+          }
+        } catch {
+          /* unreadable new payload — skip biome hooks */
+        }
+      }
+      // on_turn_in_biome + ambient on the effective biome
+      if (effectiveBiomeSlug) {
+        const rules = await loadBiomeRules(ctx, branch_id, effectiveBiomeSlug);
+        if (rules) {
+          if (rules.on_turn_in_biome)
+            await applyEffects(ctx, rules.on_turn_in_biome, exec);
+          if (Array.isArray(rules.ambient_effects)) {
+            const nextTurn = ((branchRow?.state as any)?.turn ?? 0) + 1;
+            for (const amb of rules.ambient_effects) {
+              const every = Number((amb as any).every_n_turns ?? 0);
+              if (every > 0 && nextTurn % every === 0) {
+                await applyEffects(ctx, [amb as any], exec);
+              }
+            }
+          }
+          if (typeof rules.time_dilation === "number" && rules.time_dilation > 0) {
+            dilation = rules.time_dilation;
+          }
+        }
+      }
+    }
+
+    // Persist the character after all effects (option + biome hooks)
+    // have mutated exec.state / exec.thisScope.
     await ctx.db.patch(character._id, {
       state,
       current_location_id:
@@ -296,11 +383,10 @@ export const applyOption = mutation({
 
     // Advance the world clock one tick per option taken, plus any
     // extra minutes from advance_time effects. Biome time_dilation
-    // (Ask 1, phase 6) composes here when flag.biome_rules is on.
+    // composes via `dilation` resolved above.
     if (branchRow?.state?.time) {
-      let next = advanceWorldTime(branchRow.state.time as any, 1, 1);
+      let next = advanceWorldTime(branchRow.state.time as any, 1, dilation);
       if (exec.extra_minutes > 0) {
-        // Second pass at 1 min/tick for the extra budget.
         const tmp = { ...next, tick_minutes: 1 };
         next = advanceWorldTime(tmp, exec.extra_minutes, 1);
         next.tick_minutes = (branchRow.state.time as any).tick_minutes;
