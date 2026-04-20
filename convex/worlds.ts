@@ -563,6 +563,205 @@ Rules:
 - Respect the world style anchor's color cues when hinted.
 - No markdown, no commentary, JSON only.`;
 
+// --------------------------------------------------------------------
+// Bible feedback — Opus suggests a diff; user approves → new
+// artifact_version. Keeps authorial voice; prevents arbitrary rewrites.
+
+const BIBLE_FEEDBACK_MODEL = "claude-opus-4-7";
+
+export const suggestBibleEdit = action({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    feedback: v.string(),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_slug, feedback },
+  ): Promise<{
+    current: Record<string, unknown>;
+    suggested: Record<string, unknown>;
+    rationale: string;
+    bible_entity_id: Id<"entities">;
+    current_version: number;
+  }> => {
+    const trimmed = feedback.trim();
+    if (trimmed.length < 4) throw new Error("feedback too short");
+    if (trimmed.length > 1500) throw new Error("feedback too long");
+
+    const info = await ctx.runQuery(internal.worlds.loadBibleForEdit, {
+      session_token,
+      world_slug,
+    });
+    if (!info) throw new Error("bible not found or forbidden");
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: BIBLE_FEEDBACK_MODEL,
+      max_tokens: 3000,
+      temperature: 0.7,
+      system: [{ type: "text", text: BIBLE_EDIT_SYSTEM_PROMPT }],
+      messages: [
+        {
+          role: "user",
+          content: `<current_bible>\n${JSON.stringify(info.bible, null, 2)}\n</current_bible>\n\n<feedback>${trimmed}</feedback>\n\nRespond with strict JSON only.`,
+        },
+      ],
+    });
+    const text = response.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join("")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "");
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e: any) {
+      throw new Error(`bible-edit JSON parse failed: ${e?.message ?? e}`);
+    }
+    if (!parsed?.suggested_bible || typeof parsed.suggested_bible !== "object")
+      throw new Error("response missing suggested_bible");
+    return {
+      current: info.bible,
+      suggested: parsed.suggested_bible,
+      rationale: String(parsed.rationale ?? ""),
+      bible_entity_id: info.bible_entity_id,
+      current_version: info.version,
+    };
+  },
+});
+
+export const loadBibleForEdit = internalQuery({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q: any) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    const { user_id } = await resolveMember(ctx as any, session_token, world._id);
+    if (world.owner_user_id !== user_id) return null;
+    if (!world.current_branch_id) return null;
+    const bibleEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q: any) =>
+        q
+          .eq("branch_id", world.current_branch_id!)
+          .eq("type", "bible")
+          .eq("slug", "bible"),
+      )
+      .first();
+    if (!bibleEntity) return null;
+    const v = await ctx.db
+      .query("artifact_versions")
+      .withIndex("by_artifact_version", (q: any) =>
+        q
+          .eq("artifact_entity_id", bibleEntity._id)
+          .eq("version", bibleEntity.current_version),
+      )
+      .first();
+    if (!v) return null;
+    const bible = await readJSONBlob<Record<string, unknown>>(
+      ctx as any,
+      v.blob_hash,
+    );
+    return {
+      bible,
+      bible_entity_id: bibleEntity._id,
+      version: bibleEntity.current_version,
+    };
+  },
+});
+
+/** Apply a suggested bible diff: create a new artifact_version. Owner
+ *  must re-supply the expected current_version so we bail if someone
+ *  else edited the bible between suggest and apply. */
+export const applyBibleEdit = mutation({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    new_bible_json: v.string(),
+    expected_version: v.number(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_slug, new_bible_json, expected_version, reason },
+  ) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world not found: ${world_slug}`);
+    const { user_id, user } = await resolveMember(ctx, session_token, world._id);
+    if (world.owner_user_id !== user_id)
+      throw new Error("apply-bible-edit is owner-only");
+    if (!world.current_branch_id) throw new Error("world has no branch");
+    const bibleEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q) =>
+        q
+          .eq("branch_id", world.current_branch_id!)
+          .eq("type", "bible")
+          .eq("slug", "bible"),
+      )
+      .first();
+    if (!bibleEntity) throw new Error("bible not found");
+    if (bibleEntity.current_version !== expected_version) {
+      throw new Error(
+        `bible version changed (saw v${bibleEntity.current_version}, expected v${expected_version}); reload and retry`,
+      );
+    }
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(new_bible_json);
+    } catch (e: any) {
+      throw new Error(`new_bible_json not parseable: ${e?.message ?? e}`);
+    }
+    const hash = await writeJSONBlob(ctx, payload);
+    const nextV = bibleEntity.current_version + 1;
+    await ctx.db.insert("artifact_versions", {
+      world_id: world._id,
+      branch_id: world.current_branch_id,
+      artifact_entity_id: bibleEntity._id,
+      version: nextV,
+      blob_hash: hash,
+      content_type: "application/json",
+      author_user_id: user_id,
+      author_pseudonym: user.display_name ?? "author",
+      edit_kind: "bible_feedback",
+      reason: reason ?? "ai-suggested edit approved",
+      created_at: Date.now(),
+    });
+    await ctx.db.patch(bibleEntity._id, {
+      current_version: nextV,
+      updated_at: Date.now(),
+    });
+    return { version: nextV };
+  },
+});
+
+const BIBLE_EDIT_SYSTEM_PROMPT = `You are assisting a family who has given you feedback about their Weaver world bible. Propose a minimal edit to the bible that addresses the feedback while preserving their voice, taboos, and established facts.
+
+Respond with strict JSON only:
+
+{
+  "suggested_bible": { <the full updated bible object, preserving all existing keys and values that don't need to change> },
+  "rationale": "<one short paragraph explaining what you changed and why>"
+}
+
+Rules:
+- DO keep every existing field that doesn't need to change.
+- DO preserve established_facts unless the feedback explicitly contradicts one (and then add a note in rationale).
+- DO respect taboos: never remove one, only add.
+- DO change tone descriptors when feedback is about tone.
+- DO add to biomes/characters lists when feedback introduces new elements.
+- DON'T rewrite the prose_sample wholesale unless the feedback explicitly asks for tone shift.
+- DON'T change content_rating unless explicitly requested.
+- DON'T invent or remove content_rating, name, or tagline.`;
+
 /** Fetch a biome's authored palette from its entity payload (auto-gen'd
  *  or hand-authored). Returns null if the biome has no palette or the
  *  biome entity isn't in the world. Used by the page loader alongside

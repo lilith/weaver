@@ -679,6 +679,121 @@ export const addToReferenceBoard = mutation({
 });
 
 // --------------------------------------------------------------------
+// Admin — reference-board management.
+
+/** List every reference-board entry in a world, grouped by kind,
+ *  with blob hashes + upvote counts for rendering thumbnails. */
+export const listReferenceBoard = query({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    const { user_id } = await resolveMember(ctx, session_token, world._id);
+    // Owner-only for the full board (it's a curation surface).
+    if (world.owner_user_id !== user_id) return null;
+    const rows = await ctx.db
+      .query("art_reference_board")
+      .withIndex("by_world_kind", (q) => q.eq("world_id", world._id))
+      .collect();
+    const byKind: Record<string, any[]> = {};
+    for (const r of rows) {
+      const rendering = (await ctx.db.get(r.rendering_id)) as any;
+      if (!rendering || rendering.status === "hidden") continue;
+      byKind[r.kind] ??= [];
+      byKind[r.kind].push({
+        id: r._id,
+        rendering_id: r.rendering_id,
+        kind: r.kind,
+        caption: r.caption ?? null,
+        order: r.order,
+        added_at: r.created_at,
+        blob_hash: rendering.blob_hash ?? null,
+        upvote_count: rendering.upvote_count ?? 0,
+        mode: rendering.mode,
+        entity_id: rendering.entity_id,
+      });
+    }
+    for (const k of Object.keys(byKind)) {
+      byKind[k].sort((a, b) => a.order - b.order);
+    }
+    return byKind;
+  },
+});
+
+/** Remove a single reference-board entry. Owner-only. */
+export const removeFromReferenceBoard = mutation({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    board_id: v.id("art_reference_board"),
+  },
+  handler: async (ctx, { session_token, world_slug, board_id }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world not found: ${world_slug}`);
+    const { user_id } = await resolveMember(ctx, session_token, world._id);
+    if (world.owner_user_id !== user_id)
+      throw new Error("remove-from-board is owner-only");
+    const row = await ctx.db.get(board_id);
+    if (!row || row.world_id !== world._id) throw new Error("not in this world");
+    await ctx.db.delete(board_id);
+    return { ok: true };
+  },
+});
+
+/** Every ready-status rendering in a world, flat list, for the admin
+ *  page's "pick art to pin to board" surface. */
+export const listAllRenderings = query({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    mode_filter: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { session_token, world_slug, mode_filter, limit }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    const { user_id } = await resolveMember(ctx, session_token, world._id);
+    if (world.owner_user_id !== user_id) return null;
+    const rows = await ctx.db
+      .query("entity_art_renderings")
+      .withIndex("by_world", (q) => q.eq("world_id", world._id))
+      .collect();
+    let filtered = rows.filter((r: any) => r.status === "ready");
+    if (mode_filter) filtered = filtered.filter((r: any) => r.mode === mode_filter);
+    filtered.sort((a: any, b: any) =>
+      b.upvote_count - a.upvote_count || b.created_at - a.created_at,
+    );
+    const capped = filtered.slice(0, limit ?? 200);
+    // Hydrate each with the parent entity's slug + type for display.
+    const out = [];
+    for (const r of capped) {
+      const e = await ctx.db.get(r.entity_id);
+      out.push({
+        id: r._id,
+        mode: r.mode,
+        variant_index: r.variant_index,
+        blob_hash: r.blob_hash ?? null,
+        upvote_count: r.upvote_count,
+        created_at: r.created_at,
+        entity_id: r.entity_id,
+        entity_type: e?.type ?? null,
+        entity_slug: e?.slug ?? null,
+      });
+    }
+    return out;
+  },
+});
+
+// --------------------------------------------------------------------
 // Retrofit: migrate existing entity.art_blob_hash → entity_art_renderings
 
 export const migrateArtToRenderings = mutation({

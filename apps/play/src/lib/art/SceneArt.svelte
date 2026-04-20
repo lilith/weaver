@@ -544,15 +544,34 @@
 				</div>
 
 				{#if meta && variant}
-					<p class="variant-byline font-hand">
-						{meta.label}
-						{#if currentVariants.length > 1}
-							· {variantIndex + 1} of {currentVariants.length}
-						{/if}
-						{#if (variant.upvote_count ?? 0) > 0}
-							· {variant.upvote_count} ♥
-						{/if}
-					</p>
+					<div class="variant-byline-row">
+						<p class="variant-byline font-hand">
+							{meta.label}
+							{#if currentVariants.length > 1}
+								· {variantIndex + 1} of {currentVariants.length}
+							{/if}
+							{#if (variant.upvote_count ?? 0) > 0}
+								· {variant.upvote_count} ♥
+							{/if}
+						</p>
+						<!-- Prominent "roll again" — tap-to-cycle the current mode
+							 into a fresh variant. Variants accumulate; use the dots
+							 above to flip back. -->
+						<button
+							type="button"
+							class="roll-again font-hand"
+							disabled={busyAction !== null}
+							onclick={regen}
+							title="roll again in this mode"
+						>
+							{#if busyAction === 'regen'}
+								<span class="weave-spinner" aria-hidden="true"></span>
+								brewing…
+							{:else}
+								↻ roll again
+							{/if}
+						</button>
+					</div>
 				{/if}
 			{/if}
 
@@ -1056,6 +1075,45 @@
 		to {
 			opacity: 1;
 			transform: translateY(0);
+		}
+	}
+
+	/* --------------------------------------------------------------
+	   Roll-again row — byline + the prominent recycle action.
+	   -------------------------------------------------------------- */
+	.variant-byline-row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-top: 0.25rem;
+	}
+	.roll-again {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.35rem 0.8rem;
+		background: rgba(232, 160, 36, 0.1);
+		border: 1px solid rgba(232, 160, 36, 0.35);
+		color: var(--color-candle-300);
+		border-radius: 3px;
+		font-size: 1rem;
+		cursor: pointer;
+		transition: background 140ms ease, border-color 140ms ease;
+		min-height: 36px;
+	}
+	.roll-again:hover:not(:disabled) {
+		background: rgba(232, 160, 36, 0.18);
+		border-color: var(--color-candle-300);
+	}
+	.roll-again:disabled {
+		opacity: 0.55;
+		cursor: wait;
+	}
+	@media (pointer: coarse) {
+		.roll-again {
+			min-height: 44px;
+			padding: 0.5rem 1rem;
 		}
 	}
 
