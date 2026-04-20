@@ -355,6 +355,59 @@ export const getCostSummary = query({
   },
 });
 
+/** Bulk export: every entity in the world's current branch, with full
+ *  payloads. Used by `weaver export` to dump a world into the authoring
+ *  file format defined in spec/AUTHORING_AND_SYNC.md. */
+export const exportWorld = query({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const { world } = await resolveMemberBySlug(ctx, session_token, world_slug);
+    if (!world.current_branch_id) return null;
+    const entities = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type", (q: any) =>
+        q.eq("branch_id", world.current_branch_id!),
+      )
+      .collect();
+    const dumps: Array<{
+      id: string;
+      type: string;
+      slug: string;
+      version: number;
+      draft: boolean;
+      author_pseudonym: string | null;
+      payload: Record<string, unknown>;
+    }> = [];
+    for (const e of entities) {
+      try {
+        const payload = await readPayload<Record<string, unknown>>(ctx, e);
+        dumps.push({
+          id: e._id,
+          type: e.type,
+          slug: e.slug,
+          version: e.current_version,
+          draft: (e as any).draft === true,
+          author_pseudonym: e.author_pseudonym ?? null,
+          payload,
+        });
+      } catch {
+        // skip entities whose payload can't be read (shouldn't happen)
+      }
+    }
+    return {
+      world: {
+        id: world._id,
+        slug: world.slug,
+        name: world.name,
+        content_rating: world.content_rating,
+        current_branch_id: world.current_branch_id,
+      },
+      exported_at: Date.now(),
+      entities: dumps,
+    };
+  },
+});
+
 /** Version list for an entity — shows edit history, with author pseudonyms. */
 export const listVersions = query({
   args: {
@@ -781,6 +834,110 @@ export const fixEntityField = mutation({
       entity_id: entity._id,
       field,
       new_version: newVersion,
+      previous_version: entity.current_version,
+    };
+  },
+});
+
+/** Replace an entity's full payload in one shot. Non-destructive —
+ *  creates a new artifact_version. Member-level (observer mode fix
+ *  cap), with an allowlist on entity types so nobody pushes garbage
+ *  into bible/theme without a clearer migration path. */
+export const pushEntityPayload = mutation({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    type: v.string(),
+    slug: v.string(),
+    payload_json: v.string(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_slug, type, slug, payload_json, reason },
+  ) => {
+    const { world, user, user_id } = await resolveMemberBySlug(
+      ctx,
+      session_token,
+      world_slug,
+    );
+    if (!world.current_branch_id) throw new Error("world has no branch");
+    const allowed = new Set(["location", "biome", "character", "npc", "item"]);
+    if (!allowed.has(type))
+      throw new Error(`push not allowed for type "${type}" (allowlist: ${[...allowed].join(",")})`);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(payload_json);
+    } catch (e: any) {
+      throw new Error(`payload_json not parseable: ${e?.message ?? e}`);
+    }
+    const entity = (await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q: any) =>
+        q
+          .eq("branch_id", world.current_branch_id!)
+          .eq("type", type)
+          .eq("slug", slug),
+      )
+      .first()) as Doc<"entities"> | null;
+    if (!entity) {
+      // Create brand-new entity — the push-is-create path. Author as
+      // caller. Useful for agents authoring new content into an
+      // existing world.
+      const now = Date.now();
+      const hash = await writeJSONBlob(ctx, payload);
+      const pseudonym = user.display_name ?? "claude-cli";
+      const id = await ctx.db.insert("entities", {
+        world_id: world._id,
+        branch_id: world.current_branch_id,
+        type,
+        slug,
+        current_version: 1,
+        schema_version: 1,
+        author_user_id: user_id,
+        author_pseudonym: pseudonym,
+        created_at: now,
+        updated_at: now,
+      });
+      await ctx.db.insert("artifact_versions", {
+        world_id: world._id,
+        branch_id: world.current_branch_id,
+        artifact_entity_id: id,
+        version: 1,
+        blob_hash: hash,
+        content_type: "application/json",
+        author_user_id: user_id,
+        author_pseudonym: pseudonym,
+        edit_kind: "create_via_push",
+        reason: reason ?? "cli push create",
+        created_at: now,
+      });
+      return { created: true, entity_id: id, version: 1 };
+    }
+    const newHash = await writeJSONBlob(ctx, payload);
+    const newVersion = entity.current_version + 1;
+    const pseudonym = user.display_name ?? "claude-cli";
+    await ctx.db.insert("artifact_versions", {
+      world_id: world._id,
+      branch_id: world.current_branch_id,
+      artifact_entity_id: entity._id,
+      version: newVersion,
+      blob_hash: newHash,
+      content_type: "application/json",
+      author_user_id: user_id,
+      author_pseudonym: pseudonym,
+      edit_kind: "replace_via_push",
+      reason: reason ?? "cli push",
+      created_at: Date.now(),
+    });
+    await ctx.db.patch(entity._id, {
+      current_version: newVersion,
+      updated_at: Date.now(),
+    });
+    return {
+      updated: true,
+      entity_id: entity._id,
+      version: newVersion,
       previous_version: entity.current_version,
     };
   },

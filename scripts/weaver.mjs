@@ -47,15 +47,46 @@
 // --url <convex-url> (override PUBLIC_CONVEX_URL).
 
 import { ConvexHttpClient } from "convex/browser";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolve, join, dirname } from "node:path";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
+import { resolve, join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
+import matter from "gray-matter";
 import "dotenv/config";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const { api } = await import(resolve(HERE, "../convex/_generated/api.js"));
+
+// Field naming rules per AUTHORING_AND_SYNC.md §"Per-type reference".
+// For each entity type: which payload field becomes the markdown body,
+// and which fields are purely runtime (never written to files).
+const BODY_FIELD_BY_TYPE = {
+  bible: null,
+  biome: "description",
+  character: "description",
+  location: "description_template",
+  npc: "description",
+  item: "description",
+};
+const RUNTIME_OMIT_FIELDS = new Set([
+  "created_at",
+  "updated_at",
+  "version",
+  "schema_version",
+  "author_user_id",
+  "art_status",
+  "chat_thread_id",
+  "discovered_by",
+  "_id",
+]);
 // Ref helper: "cli.getOwnership" -> api.cli.getOwnership. Keeps call
 // sites readable while using typed FunctionReferences under the hood.
 function ref(path) {
@@ -244,6 +275,14 @@ async function dispatch() {
       return cmdFlag(rest);
     case "prefetch":
       return cmdPrefetch(rest);
+    case "export":
+      return cmdExport(rest);
+    case "validate":
+      return cmdValidate(rest);
+    case "push":
+      return cmdPush(rest);
+    case "sync":
+      return cmdSync(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -1048,6 +1087,385 @@ async function cmdPrefetch([sub]) {
         .map(
           (x) =>
             `  [${x.option_index}] ${x.option_label.padEnd(36)} ${x.status}${x.prefetched_slug ? ` (→ ${x.prefetched_slug})` : ""}`,
+        )
+        .join("\n"),
+  );
+}
+
+// ---------------------------------------------------------------
+// Commands: export / validate (two-way content sync per spec AUTHORING_AND_SYNC)
+
+function splitBody(type, payload) {
+  const bodyField = BODY_FIELD_BY_TYPE[type];
+  const frontmatter = {};
+  let body = "";
+  for (const [k, v] of Object.entries(payload ?? {})) {
+    if (RUNTIME_OMIT_FIELDS.has(k)) continue;
+    if (bodyField && k === bodyField) {
+      body = typeof v === "string" ? v : JSON.stringify(v, null, 2);
+    } else {
+      frontmatter[k] = v;
+    }
+  }
+  return { frontmatter, body };
+}
+
+function yamlDump(o) {
+  // Minimal YAML writer — good enough for the shapes Weaver emits (strings,
+  // numbers, booleans, arrays, nested objects). Uses JSON-compatible quoting.
+  const lines = [];
+  const emit = (val, indent) => {
+    if (val === null || val === undefined) return "null";
+    if (typeof val === "boolean" || typeof val === "number") return String(val);
+    if (typeof val === "string") {
+      // Quote any string that isn't a clean plain-scalar. YAML reserved
+      // chars at the start (! & * @ | > % ? -) need quoting; so do
+      // strings containing colons, #, quotes, leading/trailing ws, or
+      // control chars. Safest: JSON-quote anything that isn't a pure
+      // alphanum/underscore/dash/period/space word.
+      if (val === "") return '""';
+      if (/[\n\r\t"'#&*!@|>%?]/.test(val)) return JSON.stringify(val);
+      if (/:/.test(val)) return JSON.stringify(val);
+      if (val !== val.trim()) return JSON.stringify(val);
+      if (/^[\-\[\]{},&*!|>]/.test(val)) return JSON.stringify(val);
+      // yes/no/true/false/null unquoted would be booleans/null in YAML
+      if (/^(yes|no|true|false|null|~|on|off)$/i.test(val))
+        return JSON.stringify(val);
+      return val;
+    }
+    if (Array.isArray(val)) {
+      if (val.length === 0) return "[]";
+      return (
+        "\n" +
+        val
+          .map((x) => {
+            const sub = emit(x, indent + 2);
+            if (sub.startsWith("\n")) return `${" ".repeat(indent)}-${sub}`;
+            return `${" ".repeat(indent)}- ${sub}`;
+          })
+          .join("\n")
+      );
+    }
+    if (typeof val === "object") {
+      if (Object.keys(val).length === 0) return "{}";
+      return (
+        "\n" +
+        Object.entries(val)
+          .map(([k, v]) => {
+            const sub = emit(v, indent + 2);
+            if (sub.startsWith("\n"))
+              return `${" ".repeat(indent)}${k}:${sub}`;
+            return `${" ".repeat(indent)}${k}: ${sub}`;
+          })
+          .join("\n")
+      );
+    }
+    return JSON.stringify(val);
+  };
+  for (const [k, v] of Object.entries(o)) {
+    const sub = emit(v, 2);
+    if (sub.startsWith("\n")) lines.push(`${k}:${sub}`);
+    else lines.push(`${k}: ${sub}`);
+  }
+  return lines.join("\n");
+}
+
+async function cmdExport([slug, dir]) {
+  needSession();
+  if (!slug || !dir)
+    err("usage: weaver export <world_slug> <dir>", 2);
+  const client = getClient();
+  const dump = await client.query(ref("cli.exportWorld"), {
+    session_token: cfg.session_token,
+    world_slug: slug,
+  });
+  if (!dump) err(`world not found or empty: ${slug}`, 3);
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, ".weaver-sync"), { recursive: true });
+  writeFileSync(
+    join(dir, ".weaver-sync", "world.json"),
+    JSON.stringify(
+      { world: dump.world, exported_at: dump.exported_at },
+      null,
+      2,
+    ),
+  );
+  const map = {};
+  let wrote = 0;
+  for (const e of dump.entities) {
+    // Skip draft entities — they're prefetch ephemera or in-flight journeys.
+    if (e.draft) continue;
+    map[`${e.type}/${e.slug}`] = e.id;
+    if (e.type === "bible") {
+      // bible.md at root
+      const { frontmatter, body } = splitBody("bible", e.payload);
+      writeEntity(join(dir, "bible.md"), frontmatter, body, e.author_pseudonym);
+      wrote++;
+      continue;
+    }
+    const subdir = typeSubdir(e.type);
+    if (!subdir) {
+      writeFileSync(
+        join(dir, `${e.type}-${e.slug}.json`),
+        JSON.stringify(e.payload, null, 2),
+      );
+      wrote++;
+      continue;
+    }
+    mkdirSync(join(dir, subdir), { recursive: true });
+    const { frontmatter, body } = splitBody(e.type, e.payload);
+    writeEntity(
+      join(dir, subdir, `${e.slug}.md`),
+      frontmatter,
+      body,
+      e.author_pseudonym,
+    );
+    wrote++;
+  }
+  writeFileSync(
+    join(dir, ".weaver-sync", "map.json"),
+    JSON.stringify(map, null, 2),
+  );
+  out(
+    { world: dump.world.slug, dir, files_written: wrote },
+    (o) => `exported ${o.files_written} files to ${o.dir}`,
+  );
+}
+
+function typeSubdir(type) {
+  return {
+    biome: "biomes",
+    character: "characters",
+    location: "locations",
+    npc: "npcs",
+    item: "items",
+  }[type] ?? null;
+}
+
+function writeEntity(path, frontmatter, body, author_pseudonym) {
+  const fm = { ...frontmatter };
+  if (author_pseudonym && !fm.author_pseudonym)
+    fm.author_pseudonym = author_pseudonym;
+  const yaml = yamlDump(fm);
+  const content = `---\n${yaml}\n---\n\n${body}\n`;
+  writeFileSync(path, content);
+}
+
+async function cmdValidate([dir]) {
+  if (!dir) err("usage: weaver validate <dir>", 2);
+  if (!existsSync(dir)) err(`dir not found: ${dir}`, 3);
+  const issues = [];
+  const counts = {};
+  const known = { biome: new Set(), location: new Set(), character: new Set(), npc: new Set(), item: new Set() };
+
+  const biblePath = join(dir, "bible.md");
+  if (!existsSync(biblePath)) {
+    issues.push("missing bible.md");
+  } else {
+    const b = parseEntityFile(biblePath);
+    for (const field of ["name", "tagline", "tone"]) {
+      if (b.frontmatter[field] === undefined)
+        issues.push(`bible.md: missing field "${field}"`);
+    }
+    counts.bible = 1;
+  }
+  for (const [type, subdir] of Object.entries({
+    biome: "biomes",
+    character: "characters",
+    npc: "npcs",
+    location: "locations",
+    item: "items",
+  })) {
+    const fullSub = join(dir, subdir);
+    if (!existsSync(fullSub)) continue;
+    const files = readdirSync(fullSub).filter((f) => f.endsWith(".md"));
+    counts[type] = files.length;
+    for (const f of files) {
+      const slug = basename(f, ".md");
+      known[type].add(slug);
+      const parsed = parseEntityFile(join(fullSub, f));
+      if (type === "location") {
+        if (!parsed.frontmatter.biome)
+          issues.push(`locations/${f}: missing biome`);
+        for (const [dir2, target] of Object.entries(
+          parsed.frontmatter.neighbors ?? {},
+        )) {
+          // defer cross-ref check to next pass
+        }
+      }
+    }
+  }
+  // Cross-reference pass.
+  for (const f of known.location) {
+    const p = parseEntityFile(join(dir, "locations", f + ".md"));
+    const biome = p.frontmatter.biome;
+    if (biome && !known.biome.has(biome))
+      issues.push(`locations/${f}.md: biome "${biome}" has no biomes/${biome}.md`);
+    for (const [dir2, target] of Object.entries(p.frontmatter.neighbors ?? {})) {
+      if (!known.location.has(target))
+        issues.push(
+          `locations/${f}.md: neighbor "${dir2}: ${target}" points to unknown location`,
+        );
+    }
+    for (const opt of p.frontmatter.options ?? []) {
+      if (opt.target && !known.location.has(opt.target) && !opt.target.startsWith("#")) {
+        // allow unknown target — importer creates stub. Surface as warning.
+        issues.push(
+          `locations/${f}.md option "${opt.label}" target "${opt.target}" unknown (stub will be created on import)`,
+        );
+      }
+    }
+  }
+  for (const f of known.npc) {
+    const p = parseEntityFile(join(dir, "npcs", f + ".md"));
+    const at = p.frontmatter.lives_at;
+    if (at && !known.location.has(at))
+      issues.push(`npcs/${f}.md: lives_at "${at}" unknown`);
+  }
+  const ok = issues.length === 0;
+  out(
+    { ok, counts, issues },
+    (o) =>
+      `${ok ? "OK" : "ISSUES"}\n` +
+      `counts: ${JSON.stringify(o.counts)}\n` +
+      (o.issues.length ? o.issues.map((i) => `  - ${i}`).join("\n") : "  (none)"),
+  );
+  if (!ok) process.exit(1);
+}
+
+function parseEntityFile(path) {
+  const raw = readFileSync(path, "utf-8");
+  const parsed = matter(raw);
+  return { frontmatter: parsed.data, body: parsed.content.trim() };
+}
+
+// Reconstruct payload by merging frontmatter + body (where body is the
+// spec-designated field for that entity type).
+function payloadFromEntityFile(type, path) {
+  const { frontmatter, body } = parseEntityFile(path);
+  const payload = { ...frontmatter };
+  const bodyField = BODY_FIELD_BY_TYPE[type];
+  if (bodyField && body) payload[bodyField] = body;
+  // Stamp the canonical type + slug for safety — file basename is slug.
+  if (!payload.type) payload.type = type;
+  if (!payload.slug)
+    payload.slug = basename(path, ".md");
+  return payload;
+}
+
+async function cmdPush([type, slug, filePath, ...more]) {
+  needSession();
+  if (!type || !slug || !filePath)
+    err('usage: weaver push <type> <slug> <file.md> [--reason "..."]', 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: push is author-only (or use --as <owner-email>)", 2);
+  if (!existsSync(filePath)) err(`file not found: ${filePath}`, 3);
+  const reasonIdx = more.indexOf("--reason");
+  const reason = reasonIdx >= 0 ? more[reasonIdx + 1] : undefined;
+  const payload = payloadFromEntityFile(type, filePath);
+  const client = getClient();
+  const r = await client.mutation(ref("cli.pushEntityPayload"), {
+    session_token: cfg.session_token,
+    world_slug: currentWorld(),
+    type,
+    slug,
+    payload_json: JSON.stringify(payload),
+    reason,
+  });
+  out(
+    r,
+    (o) =>
+      o.created
+        ? `created ${type}/${slug} (v1)`
+        : `${type}/${slug}  v${o.previous_version} → v${o.version}`,
+  );
+}
+
+/** `weaver sync <dir>` — push every file under <dir> into the current
+ *  world. Walks biomes/ characters/ npcs/ locations/ items/ bible.md.
+ *  Idempotent; creates new versions for each. Agent-friendly batch
+ *  update: export → edit → sync. */
+async function cmdSync([dir, ...more]) {
+  needSession();
+  if (!dir) err("usage: weaver sync <dir> [--dry-run]", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: sync is author-only (or use --as <owner-email>)", 2);
+  const dry = more.includes("--dry-run");
+  const reasonIdx = more.indexOf("--reason");
+  const reason = reasonIdx >= 0 ? more[reasonIdx + 1] : "cli sync";
+
+  const toPush = [];
+  const biblePath = join(dir, "bible.md");
+  if (existsSync(biblePath))
+    toPush.push({ type: "bible", slug: "bible", path: biblePath });
+  for (const [type, sub] of Object.entries({
+    biome: "biomes",
+    character: "characters",
+    npc: "npcs",
+    location: "locations",
+    item: "items",
+  })) {
+    const subdir = join(dir, sub);
+    if (!existsSync(subdir)) continue;
+    for (const f of readdirSync(subdir).filter((x) => x.endsWith(".md"))) {
+      toPush.push({
+        type,
+        slug: basename(f, ".md"),
+        path: join(subdir, f),
+      });
+    }
+  }
+
+  if (dry) {
+    return out(
+      toPush,
+      (rs) =>
+        `DRY RUN — would push ${rs.length} entities:\n` +
+        rs.map((r) => `  ${r.type.padEnd(10)} ${r.slug}`).join("\n"),
+    );
+  }
+
+  const client = getClient();
+  const world_slug = currentWorld();
+  const results = [];
+  for (const item of toPush) {
+    // Bible push route is not on the allowlist; skip with a warning to
+    // keep batch non-destructive. Use `weaver fix bible bible <field>`
+    // for bible edits.
+    if (item.type === "bible") {
+      results.push({ ...item, status: "skipped", note: "bible edits via `fix` only" });
+      continue;
+    }
+    try {
+      const payload = payloadFromEntityFile(item.type, item.path);
+      const r = await client.mutation(ref("cli.pushEntityPayload"), {
+        session_token: cfg.session_token,
+        world_slug,
+        type: item.type,
+        slug: item.slug,
+        payload_json: JSON.stringify(payload),
+        reason,
+      });
+      results.push({ ...item, status: r.created ? "created" : "updated", version: r.version });
+    } catch (e) {
+      results.push({ ...item, status: "error", error: e?.message ?? String(e) });
+    }
+  }
+  const summary = results.reduce(
+    (acc, r) => ((acc[r.status] = (acc[r.status] ?? 0) + 1), acc),
+    {},
+  );
+  out(
+    { summary, results },
+    (o) =>
+      Object.entries(o.summary)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" ") +
+      "\n" +
+      o.results
+        .map(
+          (r) =>
+            `  ${r.status.padEnd(8)} ${r.type.padEnd(10)} ${r.slug}${r.note ? ` — ${r.note}` : ""}${r.error ? ` — ${r.error}` : ""}${r.version ? ` (v${r.version})` : ""}`,
         )
         .join("\n"),
   );
