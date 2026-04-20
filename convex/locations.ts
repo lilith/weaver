@@ -404,10 +404,27 @@ export const applyOption = mutation({
     // after the mutation commits; their text lands on the next look.
     for (const p of exec.pending) {
       if (p.kind === "narrate") {
+        // Resolve speaker slug → entity id for NPC-memory auto-write.
+        let speakerEntityId: Id<"entities"> | undefined;
+        if (p.payload.speaker) {
+          for (const t of ["npc", "character"] as const) {
+            const hit = await ctx.db
+              .query("entities")
+              .withIndex("by_branch_type_slug", (q: any) =>
+                q.eq("branch_id", branch_id).eq("type", t).eq("slug", p.payload.speaker),
+              )
+              .first();
+            if (hit) {
+              speakerEntityId = hit._id;
+              break;
+            }
+          }
+        }
         await ctx.scheduler.runAfter(0, internal.effects.runNarrate, {
           world_id,
           branch_id,
           character_id: character._id,
+          speaker_entity_id: speakerEntityId,
           prompt: p.payload.prompt,
           salience: p.payload.salience,
           memory_event_type: p.payload.memory_event_type,

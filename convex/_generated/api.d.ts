@@ -21,6 +21,7 @@ import type * as import_ from "../import.js";
 import type * as journeys from "../journeys.js";
 import type * as locations from "../locations.js";
 import type * as narrative from "../narrative.js";
+import type * as npc_memory from "../npc_memory.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
 import type * as worlds from "../worlds.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   journeys: typeof journeys;
   locations: typeof locations;
   narrative: typeof narrative;
+  npc_memory: typeof npc_memory;
   seed: typeof seed;
   sessions: typeof sessions;
   worlds: typeof worlds;

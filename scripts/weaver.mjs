@@ -283,6 +283,8 @@ async function dispatch() {
       return cmdPush(rest);
     case "sync":
       return cmdSync(rest);
+    case "memory":
+      return cmdMemory(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -1469,6 +1471,56 @@ async function cmdSync([dir, ...more]) {
         )
         .join("\n"),
   );
+}
+
+// ---------------------------------------------------------------
+// Commands: memory (NPC memory, Ask 4)
+
+async function cmdMemory([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "list" || sub === "show") {
+    const [npc_slug] = a;
+    if (!npc_slug) err("usage: weaver memory show <npc_slug>", 2);
+    const rows = await client.query(ref("npc_memory.listForNpc"), {
+      session_token: cfg.session_token,
+      world_slug,
+      npc_slug,
+    });
+    return out(
+      rows,
+      (rs) =>
+        rs.length === 0
+          ? `(no memories for ${npc_slug})`
+          : rs
+              .map(
+                (r) =>
+                  `  [${r.salience}] turn ${String(r.turn).padStart(4)} ${r.event_type.padEnd(20)} ${r.summary}`,
+              )
+              .join("\n"),
+    );
+  }
+  if (sub === "add") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: add is author-only (or use --as)", 2);
+    const [npc_slug, event_type, ...more] = a;
+    if (!npc_slug || !event_type)
+      err('usage: weaver memory add <npc_slug> <event_type> "<summary>" [--salience high|medium|low]', 2);
+    const salIdx = more.indexOf("--salience");
+    const salience = salIdx >= 0 ? more[salIdx + 1] : undefined;
+    const summary = more.filter((_, i) => salIdx < 0 || (i !== salIdx && i !== salIdx + 1)).join(" ");
+    const r = await client.mutation(ref("npc_memory.addForNpc"), {
+      session_token: cfg.session_token,
+      world_slug,
+      npc_slug,
+      event_type,
+      summary,
+      salience,
+    });
+    return out(r, (o) => `wrote memory ${o.id}`);
+  }
+  err("usage: weaver memory [show <npc_slug>|add <npc_slug> <event_type> \"summary\"]", 2);
 }
 
 // ---------------------------------------------------------------

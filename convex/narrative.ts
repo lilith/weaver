@@ -27,6 +27,8 @@ import { internalQuery } from "./_generated/server.js";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel.js";
 import { readJSONBlob } from "./blobs.js";
+import { loadNpcMemory } from "./npc_memory.js";
+import { isFeatureEnabled } from "./flags.js";
 
 type AssemblyCtx = {
   db: {
@@ -154,19 +156,59 @@ export async function assembleNarrativePrompt(
           role: speaker.role,
           voice: speaker.voice,
           description: speaker.description,
+          memory_config: speaker.memory ?? null,
+          memory_initial: speaker.memory_initial ?? null,
         },
         null,
         2,
       )}\n</speaker>`,
     });
   }
+
+  // Ask 4: speaker memory. Flag-gated. Injected between <speaker> and
+  // <player> so the model sees "who the NPC is" before "what they
+  // remember" before "what's happening right now."
+  if (args.speaker_entity_id) {
+    const flagOn = await isFeatureEnabled(ctx as any, "flag.npc_memory", {
+      world_id: args.world_id,
+    });
+    if (flagOn) {
+      const mem = await loadNpcMemory(ctx as any, branch_id, args.speaker_entity_id);
+      if (mem.total > 0 || speaker?.memory_initial) {
+        const highLines = mem.high
+          .map((m: any) => `  [${m.salience}] turn ${m.turn}: ${m.event_type} — ${m.summary}`)
+          .join("\n");
+        const recentLines = mem.recent
+          .map((m: any) => `  [${m.salience}] turn ${m.turn}: ${m.event_type} — ${m.summary}`)
+          .join("\n");
+        const seedLines = Array.isArray(speaker?.memory_initial)
+          ? speaker.memory_initial
+              .map(
+                (m: any) =>
+                  `  [${m.salience ?? "medium"}] seed: ${m.summary}`,
+              )
+              .join("\n")
+          : "";
+        system.push({
+          type: "text",
+          text:
+            `<speaker_memory>\n` +
+            (seedLines ? `seed:\n${seedLines}\n` : "") +
+            (highLines ? `high_salience:\n${highLines}\n` : "") +
+            (recentLines ? `recent:\n${recentLines}\n` : "") +
+            `total_rows: ${mem.total}\n` +
+            `</speaker_memory>`,
+        });
+      }
+    }
+  }
+
   if (characterSummary) {
     system.push({
       type: "text",
       text: `<player>\n${characterSummary}\n</player>`,
     });
   }
-  // TODO(Ask 4): inject speaker's npc_memory component here.
 
   const user = args.extra_context ?? "";
 
@@ -220,6 +262,8 @@ function summarizeCharacter(c: Doc<"characters">): string {
   if (typeof s.hp === "number") parts.push(`hp: ${s.hp}`);
   if (typeof s.gold === "number") parts.push(`gold: ${s.gold}`);
   if (typeof s.energy === "number") parts.push(`energy: ${s.energy}`);
+  // Inventory: two shapes — legacy array of slugs/objects OR the Wave-2
+  // map keyed by slug (flag.item_taxonomy).
   if (Array.isArray(s.inventory) && s.inventory.length > 0) {
     parts.push(
       `inventory: ${s.inventory
@@ -227,6 +271,25 @@ function summarizeCharacter(c: Doc<"characters">): string {
         .map((i: any) => (typeof i === "string" ? i : i.slug ?? "item"))
         .join(", ")}`,
     );
+  } else if (
+    s.inventory &&
+    typeof s.inventory === "object" &&
+    !Array.isArray(s.inventory)
+  ) {
+    const entries = Object.entries(s.inventory).filter(
+      ([, v]: any) => (v?.qty ?? 0) > 0,
+    );
+    if (entries.length > 0) {
+      parts.push(
+        `inventory: ${entries
+          .slice(0, 8)
+          .map(
+            ([slug, v]: any) =>
+              `${slug}×${v.qty}${v.kind ? `(${v.kind})` : ""}`,
+          )
+          .join(", ")}`,
+      );
+    }
   }
   return parts.join("\n");
 }

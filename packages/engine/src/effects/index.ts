@@ -34,7 +34,13 @@ export type Effect =
   | { kind: "take_item"; slug: string; qty?: number }
   | { kind: "use_item"; slug: string }
   | { kind: "crack_orb"; slug: string }
-  | { kind: "narrate"; prompt: string; salience?: "low" | "medium" | "high"; memory_event_type?: string }
+  | {
+      kind: "narrate";
+      prompt: string;
+      speaker?: string; // npc/character slug; used for <speaker_memory>
+      salience?: "low" | "medium" | "high";
+      memory_event_type?: string;
+    }
   | { kind: "damage"; amount: number; damage_kind?: string }
   | { kind: "heal"; amount: number }
   | { kind: "add_predicate"; subject: string; predicate: string; object: string; payload?: unknown }

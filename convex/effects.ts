@@ -416,20 +416,22 @@ export const runNarrate = internalAction({
     world_id: v.id("worlds"),
     branch_id: v.id("branches"),
     character_id: v.id("characters"),
+    speaker_entity_id: v.optional(v.id("entities")),
     prompt: v.string(),
     salience: v.optional(v.string()),
     memory_event_type: v.optional(v.string()),
   },
-  handler: async (ctx, { world_id, branch_id, character_id, prompt }) => {
-    // Minimal narrate: Sonnet 4.6, assembled narrative prompt, 1-3
-    // sentences. Appended to the character's pending_says so the next
-    // location render shows it.
+  handler: async (
+    ctx,
+    { world_id, branch_id, character_id, speaker_entity_id, prompt, salience, memory_event_type },
+  ) => {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const assembled = await ctx.runQuery(internal.narrative.buildPrompt, {
       world_id,
       purpose: "narrate",
       character_id,
+      speaker_entity_id,
     });
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
@@ -452,6 +454,45 @@ export const runNarrate = internalAction({
       character_id,
       text,
     });
+
+    // Auto-write NPC memory if the effect carried memory_event_type + a
+    // speaker. Flag-gated — writeNpcMemoryFromAction no-ops when off.
+    if (speaker_entity_id && memory_event_type) {
+      await ctx.runMutation(internal.effects.writeNpcMemoryFromAction, {
+        world_id,
+        branch_id,
+        npc_entity_id: speaker_entity_id,
+        about_character_id: character_id,
+        event_type: memory_event_type,
+        summary: text.slice(0, 120),
+        salience: (salience as any) ?? "medium",
+      });
+    }
+  },
+});
+
+/** Internal-mutation wrapper around writeNpcMemory — runNarrate (an
+ *  action) needs a mutation to persist. Respects flag.npc_memory. */
+export const writeNpcMemoryFromAction = internalMutation({
+  args: {
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    npc_entity_id: v.id("entities"),
+    about_character_id: v.optional(v.id("characters")),
+    event_type: v.string(),
+    summary: v.string(),
+    salience: v.optional(
+      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const on = await isFeatureEnabled(ctx, "flag.npc_memory", {
+      world_id: args.world_id,
+    });
+    if (!on) return { written: false };
+    const { writeNpcMemory } = await import("./npc_memory.js");
+    const id = await writeNpcMemory(ctx, args);
+    return { written: true, id };
   },
 });
 
