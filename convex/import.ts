@@ -10,6 +10,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel.js";
 import { resolveSession } from "./sessions.js";
 import { writeJSONBlob } from "./blobs.js";
+import { scheduleArtForEntity } from "./art.js";
 
 type Entity = {
   type: "bible" | "biome" | "character" | "npc" | "location";
@@ -131,6 +132,10 @@ export const importWorldBundle = mutation({
       slugToEntityId.set(`${e.type}:${e.slug}`, entityId);
       if (e.type === "location" && e.slug === starter_location_slug) {
         starterEntityId = entityId;
+      }
+      // Kick off scene art for locations as they're created. Async.
+      if (e.type === "location") {
+        await scheduleArtForEntity(ctx, entityId);
       }
     }
 

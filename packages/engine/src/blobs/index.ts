@@ -97,4 +97,8 @@ export function prepareTextBlob(text: string, content_type: string): { hash: str
   return { hash: hashBytes(bytes), bytes, content_type };
 }
 
-export const BLOB_INLINE_MAX_BYTES = 4096;
+// 64KB inline cap — Convex v.bytes() handles up to 1MB, but keeping small
+// payloads inline saves an R2 round-trip on every read. Real-world
+// authored locations with options + canonical_features + prose typically
+// land at 5–15KB; worlds-bibles around 3–8KB. Images always go to R2.
+export const BLOB_INLINE_MAX_BYTES = 65536;

@@ -93,6 +93,7 @@ const issues = [];
 const knownBiomes = new Set();
 const knownLocations = new Set();
 const knownCharacters = new Set();
+const knownNpcs = new Set();
 
 // Bible
 const biblePath = join(worldDir, "bible.md");
@@ -142,6 +143,7 @@ for (const { slug, path } of listMarkdown(join(worldDir, "npcs"))) {
 	payload.slug = slug;
 	assertField(payload, "name", `npcs/${slug}.md`);
 	assertField(payload, "lives_at", `npcs/${slug}.md`);
+	knownNpcs.add(slug);
 	npcs.push(payload);
 	entities.push({
 		type: "npc",
@@ -196,9 +198,12 @@ for (const npc of npcs) {
 }
 for (const char of entities.filter((e) => e.type === "character")) {
 	for (const rel of char.payload.relationships ?? []) {
-		if (rel.with && !knownCharacters.has(rel.with)) {
+		if (!rel.with) continue;
+		// Accept cross-type refs: a character relating to an npc is valid
+		// (the npc is in the world, just filed under a different type).
+		if (!knownCharacters.has(rel.with) && !knownNpcs.has(rel.with)) {
 			issues.push(
-				`characters/${char.slug}.md: relationship with "${rel.with}" — character not in this world (prune or keep as world-external)`,
+				`characters/${char.slug}.md: relationship with "${rel.with}" — target not in this world's characters/ or npcs/ (prune or move the target file in)`,
 			);
 		}
 	}
