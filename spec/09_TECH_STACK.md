@@ -223,12 +223,33 @@ export default defineSchema({
     schema_version: v.number(),
     author_user_id: v.optional(v.id("users")),
     author_pseudonym: v.optional(v.string()),
+
+    // Art pipeline (see art_queue + 12_BLOB_STORAGE.md). art_blob_hash points
+    // at the current scene art blob; art_status tracks the generation state.
+    // Older drafts of the spec used `art_ref: v.id("entities")` — replaced by
+    // content-addressed blob hash so art rollback / dedupe comes for free.
+    art_blob_hash: v.optional(v.string()),
+    art_status: v.optional(
+      v.union(
+        v.literal("queued"),
+        v.literal("generating"),
+        v.literal("ready"),
+        v.literal("failed"),
+      ),
+    ),
+
+    // Draft/canon model (see 19_JOURNEYS_AND_JOURNAL.md).
+    // Drafts are author-only; canonical entities are shared per world-membership.
+    draft: v.optional(v.boolean()),         // absent reads as false
+    expanded_from_entity_id: v.optional(v.id("entities")),  // parent location for expansions
+
     created_at: v.number(),
     updated_at: v.number(),
   })
     .index("by_branch_type", ["branch_id", "type"])
     .index("by_world_type", ["world_id", "type"])
-    .index("by_author", ["author_user_id"]),
+    .index("by_author", ["author_user_id"])
+    .index("by_expansion_parent", ["expanded_from_entity_id"]),
 
   components: defineTable({
     entity_id: v.id("entities"),
@@ -252,7 +273,11 @@ export default defineSchema({
     .index("by_object_pred", ["object_id", "predicate"])
     .index("by_predicate", ["predicate"]),
 
-  // Async art generation
+  // Async art generation. The queue exists for bulk / retriable gens; today's
+  // shipped pipeline uses ctx.scheduler.runAfter() directly from the mutation
+  // that creates/expands a location and writes the result onto the entity's
+  // art_blob_hash + art_status fields. Keep the queue for future scenarios
+  // (batch re-gen, retry-on-failure, throttled art budgets).
   art_queue: defineTable({
     entity_id: v.id("entities"),
     world_id: v.id("worlds"),             // for isolation scoping and budget attribution
@@ -311,6 +336,31 @@ export default defineSchema({
     effects: v.any(),                      // what the step produced (narration, mutations, AI calls)
     created_at: v.number(),
   }).index("by_flow_time", ["flow_id", "created_at"]),
+
+  // Journeys — a run of draft locations between canonical stops.
+  // See 19_JOURNEYS_AND_JOURNAL.md. Opens on first-draft-entered-from-canonical,
+  // closes on returning to any canonical location. One open journey per
+  // character at a time.
+  journeys: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),
+    user_id: v.id("users"),
+    opened_at: v.number(),
+    closed_at: v.optional(v.number()),
+    entity_ids: v.array(v.id("entities")),
+    entity_slugs: v.array(v.string()),
+    status: v.union(
+      v.literal("open"),       // in-flight; character on a draft
+      v.literal("closed"),     // returned to canonical; awaiting decision
+      v.literal("saved"),      // user saved at least one draft from this journey
+      v.literal("discarded"),  // user explicitly declined to save any
+      v.literal("dismissed"),  // hidden from journal; drafts still URL-navigable
+    ),
+    summary: v.optional(v.string()),  // AI-generated cluster one-liner
+  })
+    .index("by_world_user", ["world_id", "user_id"])
+    .index("by_world_character_status", ["world_id", "character_id", "status"]),
 
   // Chat
   chat_threads: defineTable({

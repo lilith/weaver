@@ -148,3 +148,25 @@ These read differently in light of the revisions but are still the right calls:
 - **BLAKE3, Convex, Tailwind 4, SvelteKit 5, Opus 4.7 + cache_control, FLUX.2, R2, never-GC-by-default** — unchanged.
 - **Combat hardcoded Wave 1, module Wave 2** — unchanged; module boundary is the typed-proxy pattern defined in the revised runtime.
 - **World bible as canonical reference, cached** — unchanged; cache keys updated for multi-tenant isolation.
+
+## Revisions (2026-04-20 integration pass)
+
+After Wave 0 Day 2-4 landed, several authoring/runtime decisions crystallized in code and need to be recorded here so the pattern isn't re-litigated:
+
+| Decision | Rationale |
+|---|---|
+| **Draft/canon model for expansion-loop output** — expanded locations land with `draft=true`, visible only to the author. Canonical map growth is a deliberate save action. | The original "stub becomes canonical immediately" design made first-visit wandering irrevocable and noisy. Drafts let players explore, keep what matters, let the rest fade. Author-only visibility means one player's half-thought doesn't clutter the shared map. |
+| **Journeys + journal replace the per-location "Save to map" card** — journey opens on first draft-from-canonical, closes on return; a single cluster panel asks "keep any of these?" at close. | The per-location prompt broke immersion by demanding a decision mid-dream. Deferring to the journey close is the pattern that lets the dream stay a dream until the player is back on their feet. See `19_JOURNEYS_AND_JOURNAL.md`. |
+| **Click-into-nowhere chains to expansion** — options whose target slug doesn't resolve return `needs_expansion: { hint: option.label }` instead of failing silently. | Opus-generated options routinely reference locations that don't exist yet ("Climb higher", "Step into the light"). Silent no-op was a dead end; chaining into expansion turns every dangling option into a door. |
+| **Biome-bias prompt fragment** in the expansion loop — Opus is nudged toward existing biomes + adjacent locations unless the player's input genuinely demands a new biome. | Opus without this tends to invent a fresh biome per expansion, fracturing the visual anchor. The bias keeps worlds visually coherent across hundreds of drafts without over-constraining creativity. |
+| **Art pipeline = scheduler + R2 via S3 client, not the art_queue table** — `ctx.scheduler.runAfter(0, internal.art.generateForEntity)` on location insert/expand writes the result straight onto `entity.art_blob_hash + art_status`. The `art_queue` table is retained for future batch / retry scenarios. | Simpler than running a polling worker for the always-small family case. Scheduler gives async behavior with per-entity state living on the entity itself. |
+| **Per-biome palette overrides** — biomes carry an optional `palette:` block (hue shift, background/ink tints, atmosphere tag) composed over the world theme at render time. | Per-world themes are too broad for the vibe differences between office / sewer / apartment. Per-biome palettes give room-sized variation without multiplying theme complexity. See `10_THEME_GENERATION.md` §"Per-biome palette overrides." |
+| **`expansion_hint:` field on location frontmatter** — optional; fed into Opus's expansion prompt when generating a draft *from* that location. | Authored locations often have implicit tone/scope rules ("this is a contemplative spot, not combat") that Opus can't infer from biome + bible. Giving the author a one-line hint preserves intent. |
+| **Shared-world household via `preauthorizeHousehold` + `reseatPrimaryOwner`** — one-shot internal mutations that seat N family accounts on a primary's worlds. Forward-only (re-run when new worlds are created). | Wave 0 family-instance model has 4 family members sharing worlds; multi-tenant schema already supports this, needed a batch convenience for the common case. Auto-share-on-seed is a future refinement. See `20_HOUSEHOLD_AND_SHARING.md`. |
+| **Interim auth uses `session_token` argument, not `ctx.auth.userId`** — Convex mutations resolve user via `resolveSession(ctx, token)`. Swap to `ctx.auth.getUserIdentity()` when Better Auth lands. | Convex-native magic-link shipped before Convex custom-auth wiring was worth building; the risk is bounded because `user_id` is never client-trusted. See `CLAUDE.md` URGENT item 11. |
+
+### Open questions for a future session
+
+- **Character role enum** (`player_character` / `core_npc` / `travelling_npc` / `major_npc` / `minor_npc` / `antagonist` / `pet`) — three candidate enums are in flight across spec, extraction, and importer. Pick one canonical set. Recommendation: IMPORT_CONTRACT's `player_character | travelling_npc | antagonist | pet`. See `AUTHORING_AND_SYNC.md` §"Character role enum — OPEN QUESTION."
+- **Cross-type relationships** (`characters[].relationships[].with:` targeting an npc slug) — accept or prune? Recommendation: accept. Same spec, §"Cross-type relationships — OPEN QUESTION."
+- **Quiet Vale backup to a separate repo** — user-flagged 2026-04-20. Design spec pending (probably folds into `20_HOUSEHOLD_AND_SHARING.md`).

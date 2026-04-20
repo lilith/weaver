@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel.js";
 import { resolveSession } from "./sessions.js";
 import { writeJSONBlob } from "./blobs.js";
 import { scheduleArtForEntity } from "./art.js";
+import { initWorldTime } from "@weaver/engine/clock";
 
 type Entity = {
   type: "bible" | "biome" | "character" | "npc" | "location";
@@ -80,11 +81,21 @@ export const importWorldBundle = mutation({
       content_rating,
       created_at: now,
     });
+    // Look up bible world_time if the agent specified one, to seed the clock.
+    const bibleEntity = entities.find((e) => e.type === "bible");
+    const wt = (bibleEntity?.payload as any)?.world_time ?? {};
     const branchId = await ctx.db.insert("branches", {
       world_id: worldId,
       name: "Main",
       slug: "main",
       transient: false,
+      state: {
+        time: initWorldTime({
+          start: wt.start,
+          tick_per_turn: wt.tick_per_turn,
+        }),
+        turn: 0,
+      },
       created_at: now,
     });
     await ctx.db.patch(worldId, { current_branch_id: branchId });

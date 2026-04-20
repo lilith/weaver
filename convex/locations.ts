@@ -7,6 +7,7 @@ import { v } from "convex/values";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { resolveMember } from "./sessions.js";
 import { recordJourneyTransition } from "./journeys.js";
+import { advanceWorldTime, evalCondition } from "@weaver/engine/clock";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 async function readAuthoredPayload<T>(
@@ -38,7 +39,7 @@ export const getBySlug = query({
     slug: v.string(),
   },
   handler: async (ctx, { session_token, world_id, slug }) => {
-    await resolveMember(ctx, session_token, world_id);
+    const { user_id } = await resolveMember(ctx, session_token, world_id);
     const branch_id = await loadBranch(ctx, world_id);
     const entity = await ctx.db
       .query("entities")
@@ -48,6 +49,40 @@ export const getBySlug = query({
       .first();
     if (!entity) return null;
     const payload = await readAuthoredPayload<Record<string, unknown>>(ctx, entity);
+
+    // Build the scope for condition evaluation — world clock + character state.
+    const branch = await ctx.db.get(branch_id);
+    const worldState = (branch?.state ?? {}) as Record<string, unknown>;
+    const character = await ctx.db
+      .query("characters")
+      .withIndex("by_world_user", (q) =>
+        q.eq("world_id", world_id).eq("user_id", user_id),
+      )
+      .first();
+    const characterState = (character?.state ?? {}) as Record<string, unknown>;
+    const thisScope =
+      ((characterState as any)?.this?.[slug] as Record<string, unknown>) ?? {};
+
+    const conditionScope = {
+      world: worldState,
+      character: characterState,
+      this: thisScope,
+      location: {},
+    };
+
+    // Filter options by condition. Keep original index on each shown
+    // option so the server can still resolve option_index -> full opt.
+    const rawOpts = Array.isArray((payload as any).options)
+      ? ((payload as any).options as Array<{
+          label: string;
+          condition?: string;
+          target?: string;
+          effect?: any[];
+        }>)
+      : [];
+    const options = rawOpts
+      .map((o, original_index) => ({ ...o, original_index }))
+      .filter((o) => !o.condition || evalCondition(o.condition, conditionScope));
     const art_url =
       entity.art_blob_hash && process.env.R2_IMAGES_PUBLIC_URL
         ? `${process.env.R2_IMAGES_PUBLIC_URL}/blob/${entity.art_blob_hash.slice(0, 2)}/${entity.art_blob_hash.slice(2, 4)}/${entity.art_blob_hash}`
@@ -62,6 +97,12 @@ export const getBySlug = query({
       art_url,
       art_status: entity.art_status ?? null,
       ...payload,
+      // Override options with the condition-filtered list. Each has
+      // `original_index` so applyOption can still look up the full
+      // option payload server-side.
+      options,
+      // Expose world state so the page can render clock etc.
+      world_state: worldState,
     };
   },
 });
@@ -134,6 +175,21 @@ export const applyOption = mutation({
 
     const option = payload.options[option_index];
     if (!option) throw new Error(`option ${option_index} out of range`);
+    // Re-check the option's condition server-side against current state.
+    const branchRow = await ctx.db.get(branch_id);
+    const worldState = (branchRow?.state ?? {}) as Record<string, unknown>;
+    if ((option as any).condition) {
+      const scope = {
+        world: worldState,
+        character: (character.state ?? {}) as Record<string, unknown>,
+        this:
+          ((character.state as any)?.this?.[payload.slug] as Record<string, unknown>) ?? {},
+        location: {},
+      };
+      if (!evalCondition((option as any).condition as string, scope)) {
+        throw new Error("this option is not available right now");
+      }
+    }
 
     const state = { ...(character.state ?? {}) };
     state.this ??= {};
@@ -195,6 +251,19 @@ export const applyOption = mutation({
         newLocationEntity?._id ?? character.current_location_id,
       updated_at: Date.now(),
     });
+
+    // Advance the world clock one tick per option taken. Biome
+    // time_dilation (Ask 1) will compose here later; Wave-2 MVP uses 1.
+    if (branchRow?.state?.time) {
+      const next = advanceWorldTime(branchRow.state.time as any, 1, 1);
+      await ctx.db.patch(branch_id, {
+        state: {
+          ...branchRow.state,
+          time: next,
+          turn: ((branchRow.state as any)?.turn ?? 0) + 1,
+        },
+      });
+    }
 
     return {
       says,

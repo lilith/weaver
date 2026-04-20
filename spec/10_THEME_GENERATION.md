@@ -358,9 +358,34 @@ Ships with the app. Used before bible is built, during theme regeneration, and o
 }
 ```
 
+## Per-biome palette overrides
+
+Shipped in commit `e93c60e`. The world-level theme is the baseline; each biome can declare a small palette override that tints the location page when the player is in that biome. This makes the office feel fluorescent-cold, the sewer feel acid-green, the apartment feel warm-umber — without committing to whole per-biome themes.
+
+**Biome frontmatter addition** (optional, see `AUTHORING_AND_SYNC.md` §biomes):
+
+```yaml
+palette:
+  accent_hue_shift: -40         # degrees; shifts the world theme's accent ramp
+  background_tint: "#0b1a14"    # overrides surface/background only
+  ink_tint: "#d8f0e8"           # overrides body text color
+  atmosphere: "damp-cold"       # informative tag; UI can key subtle effects off this
+```
+
+**Runtime behavior:** the location page composes its CSS variables as `world_theme ⊕ biome_palette` — biome values win where present, world-theme values fill the rest. One mutation changes the biome's palette and every location of that biome re-renders reactively. Transitions between biomes use a 300ms cross-fade on the tinted variables so the palette shift feels like walking into a different room.
+
+**Constraints:**
+
+- Biome palette can override a small subset of the world theme (`background_tint`, `surface_tint`, `ink_tint`, `accent_hue_shift`, `atmosphere`). It cannot replace typography, motion, atoms, or full color ramps — those stay world-level so the app feels like one app.
+- Contrast validation runs on the composed output; a biome palette that would break AAA contrast is rejected at import time.
+- World theme regeneration does not touch biome palettes; a re-theme preserves whatever biome overrides were authored.
+
+**When to use.** Biomes whose vibe meaningfully differs from the world's baseline. Most worlds won't bother for every biome. Example use from the Daily Grind authoring: office-dungeon biomes get cold fluorescents; apartment gets warm umber; coffee-shop gets the world default.
+
 ## Cost
 
 - Theme generation: ~$0.02 per call (cached bible is 90% off).
 - Ornament SVGs (optional): ~$0.03 each, ~3-5 per theme.
+- Biome palette overrides: free (hand-authored in biome frontmatter; no LLM call).
 
 Total per theme including ornaments: ~$0.15 max; without ornaments, ~$0.02.

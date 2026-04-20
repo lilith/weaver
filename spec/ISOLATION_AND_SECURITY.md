@@ -273,6 +273,26 @@ function proxiedWrite(ctx, moduleManifest, { component_type, ...rest }) {
 
 These are not declarable in any module's `writes` set. Attempting to declare them fails manifest validation at build time.
 
+## Draft/canon visibility
+
+### 22a. Drafts are author-only within a world.
+
+Entities with `draft: true` are visible only to the authoring character (and, via cascade, to the author's `user_id`). Every query that returns locations to a client — location page render, neighbor lookup, `worlds.listMine` stats, journey listings — filters drafts by the requesting character's id. The world owner does NOT automatically see another member's drafts; the draft/canon distinction is per-character, not per-world.
+
+A draft becomes canonical (everyone-visible) only through an explicit `saveToMap` / `journeys.resolveJourney` mutation that flips `draft=false`. Until that happens, the draft:
+- Does not appear in any other player's adjacency graph.
+- Is not included in `world_memberships`-based queries for other members.
+- Is not included in `weaver export` output (author-scoped export: the author sees their own drafts; other members don't).
+- Is not included in `worlds.listMine` `location_count` aggregates for other members.
+
+### 22b. URL-addressable drafts.
+
+A draft's slug is still URL-routable (`/play/<world>/<loc-slug>`) — the URL is where dreams live between the canonical stops. But the route handler checks `character_id == draft.author_character_id` and 404s for anyone else. The URL is not a secret; the access control is the 404.
+
+### 22c. Shared characters, distinct drafts.
+
+When two family members play the same canonical location via separate characters (`world_memberships` gives both access; each has their own character), their draft sets are isolated. A draft author's character is the only character that sees that draft. If the other player wants to see it, the author saves it to the map first.
+
 ## Import / export integrity
 
 ### 23. `weaver import` requires a `ctx.auth.userId` with owner-or-family_mod membership in the target world.

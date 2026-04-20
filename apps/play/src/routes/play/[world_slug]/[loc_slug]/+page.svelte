@@ -51,6 +51,12 @@
 			{#if data.location.author_pseudonym}
 				<span class="font-hand text-base text-teal-400">✦ by {data.location.author_pseudonym}</span>
 			{/if}
+			{#if data.location.world_time}
+				<span class="font-hand text-base text-mist-400">
+					· {data.location.world_time.day_of_week}
+					{data.location.world_time.hhmm}
+				</span>
+			{/if}
 		</div>
 	</header>
 
@@ -197,9 +203,9 @@
 	<hr class="ornate-divider" />
 
 	<section class="space-y-3">
-		{#each data.location.options as option, i (i)}
+		{#each data.location.options as option (option.original_index ?? option.label)}
 			<form method="POST" action="?/pick" use:enhance>
-				<input type="hidden" name="option_index" value={i} />
+				<input type="hidden" name="option_index" value={option.original_index ?? 0} />
 				<button type="submit" class="choice-button">
 					<span class="mr-3 text-rose-400">❖</span>{option.label}
 				</button>

@@ -9,6 +9,7 @@ import type { Id } from "./_generated/dataModel.js";
 import { writeJSONBlob } from "./blobs.js";
 import { resolveSession } from "./sessions.js";
 import { scheduleArtForEntity } from "./art.js";
+import { initWorldTime } from "@weaver/engine/clock";
 
 type Template = "quiet-vale";
 
@@ -143,6 +144,10 @@ export const seedStarterWorld = mutation({
       name: "Main",
       slug: "main",
       transient: false,
+      state: {
+        time: initWorldTime({}), // defaults: now + 1min/turn
+        turn: 0,
+      },
       created_at: now,
     });
     await ctx.db.patch(worldId, { current_branch_id: branchId });

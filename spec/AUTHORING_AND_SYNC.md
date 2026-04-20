@@ -185,6 +185,29 @@ but the woods hide things — old stone cairns, older things beneath them.
 
 Body becomes `description`. `establishing_shot_prompt` is what the art queue uses to generate the ref image.
 
+### Character role enum — OPEN QUESTION (main agent to pick)
+
+Three candidate enums are in play across this spec, the extraction pipeline in `backstory/`, and the world importer. Pick one canonical set before the first cross-world import lands:
+
+| Enum | Source | Values |
+|---|---|---|
+| (a) Weaver original spec | this file, historical | `player_character \| core_npc \| pet` |
+| (b) Extraction shape | `backstory/EXTRACTION_SPEC.md` | `player_character \| major_npc \| minor_npc \| pet \| antagonist` |
+| (c) IMPORT_CONTRACT proposal | `backstory/IMPORT_CONTRACT.md` | `player_character \| travelling_npc \| antagonist \| pet` |
+
+Recommendation from the spec-review session: **(c)**. `travelling_npc` absorbs the concept of "major NPC who moves between locations" without needing the `major_npc/minor_npc` distinction; location-bound NPCs stay as `npcs/<slug>.md` with no role field. `core_npc` and `major_npc` are dropped.
+
+**Not decided here** — `backstory/index.md` has the migration map for extraction → Weaver. The main coding agent should pick, document the choice in `17_DECISION_LOG.md`, update this file's examples, and wire enforcement into the importer's validator.
+
+### Cross-type relationships — OPEN QUESTION (main agent to pick)
+
+`characters[].relationships[].with:` today accepts another character slug. The extraction writes entries whose `with:` is an **npc slug** (Theo, Frank, Ganesh — NPCs pinned to a location that nonetheless have real relationships with travelling characters). Two resolution paths:
+
+- **Accept cross-type.** Relationships graph spans characters ↔ npcs. Importer treats any slug that resolves to an entity in `characters/` or `npcs/` as valid. Matches how the source material actually reads.
+- **Prune to characters-only.** Importer rejects npc-target entries; authors must mechanically drop them before import. Loses some grounding context.
+
+Recommendation: **accept cross-type.** No code change; tag-along clarification in this file and the importer validator. Main agent makes the call and records in `17_DECISION_LOG.md`.
+
 ### characters/\<slug\>.md
 
 Convention A.
@@ -193,7 +216,7 @@ Convention A.
 ---
 name: Mara
 pseudonym: Mara
-role: player_character                # player_character | core_npc | pet
+role: player_character                # see §"Character role enum — OPEN QUESTION" below
 tags: [human, adult, woodworker]
 always_wears: [a green cloak, a silver ring on the right hand]
 linked_user: null                     # set by importer if pseudonym matches a user
@@ -238,6 +261,7 @@ neighbors:
 tags: [has_chat]
 safe_anchor: false
 author_pseudonym: Stardust
+expansion_hint: "A quiet resting spot between village and deep forest; whatever gets invented here should lean contemplative, not combat-heavy."
 state_keys: [this.visited, this.stump_examined, world.weather.rain]
 on_enter:
   - { kind: inc, path: this.visited, by: 1 }
@@ -265,6 +289,8 @@ An old stump occupies the center.
 Body becomes `description_template`. The template grammar is the real engine grammar (`{{#if ...}}`, `{{var.path}}`, etc.) from `02_LOCATION_SCHEMA.md` — no shorthand.
 
 `target` values reference other authored entities by slug. The importer resolves slugs to Convex IDs. An unresolved slug during `--mode=new` import creates a stub location, same as the expansion loop does (flagged in the validator output so you see it).
+
+**`expansion_hint`** (optional) is fed into the expansion loop's prompt when a draft gets generated from this location (see `04_EXPANSION_LOOP.md` §"Biome-bias prompt pattern"). One or two sentences on what the AI *can* invent here and what it should avoid. Non-schema-breaking; omit if you don't need guidance.
 
 `#module:<name>/<step>` targets work in files — the importer resolves module names by slug against `modules/`. `#inline:` targets are deprecated (see `03_INLINE_SCRIPT.md`).
 
@@ -429,6 +455,17 @@ type Issue = {
 - **Author-time API** — importable function `validateEntity(obj, kind)` that Claude Code can call between edits to self-check.
 
 ## Import
+
+### What's shipped vs. what's specced
+
+**Shipped today** (per commit `5fa869f`):
+
+- `scripts/import-world.mjs` — Node CLI that walks a world directory, parses frontmatter via `gray-matter`, validates cross-references (biome → biomes/, neighbors → locations/, npc lives_at → locations/, relationships → characters/, at least one safe_anchor), and POSTs the bundle to Convex. Requires `WEAVER_SESSION_TOKEN` in env (pair with `_dev:devSignInAs` until `ctx.auth` integration lands).
+- `convex/import.ts` — the `importWorldBundle` mutation that writes `worlds` + `main` branch + owner `world_memberships` + blob-backed entities + artifact_versions + starter character at the first `safe_anchor` in **one transaction**. Refuses on slug collision (no silent overwrite).
+
+**Not yet shipped:** items, modules/scripts, retry-on-error, the `weaver validate` CLI, the `weaver export` CLI + nightly cron backup, the round-trip reconciliation tooling. Everything below this line that references `weaver validate / export` is still specced intent; the shipped shape is `node scripts/import-world.mjs <dir>`.
+
+### Specced CLI (future)
 
 ```
 weaver import <dir> --mode=new|edit [--world <world-slug>] [--branch <branch-slug>] [--dry-run]

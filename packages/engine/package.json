@@ -8,7 +8,8 @@
     "./blobs": "./src/blobs/index.ts",
     "./template": "./src/template/index.ts",
     "./schemas": "./src/schemas/index.ts",
-    "./biomes": "./src/biomes/index.ts"
+    "./biomes": "./src/biomes/index.ts",
+    "./clock": "./src/clock/index.ts"
   },
   "peerDependencies": {
     "@noble/hashes": "*",

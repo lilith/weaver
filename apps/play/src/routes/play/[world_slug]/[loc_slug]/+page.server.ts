@@ -43,7 +43,7 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		character: (character.state as Record<string, unknown>) ?? {},
 		this: thisScope,
 		location: {},
-		world: {}
+		world: ((location as any).world_state as Record<string, unknown>) ?? {}
 	};
 	const description = renderTemplate(location.description_template as string, ctx as any);
 
@@ -58,7 +58,15 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 			biome: location.biome,
 			author_pseudonym: location.author_pseudonym,
 			description,
+			// options already filtered by condition on the server; each carries
+			// its original_index so the pick action can still identify it.
 			options: (location.options as any[]) ?? [],
+			world_time:
+				((location as any).world_state?.time as {
+					hhmm?: string;
+					day_of_week?: string;
+					day_counter?: number;
+				} | undefined) ?? null,
 			tags: (location.tags as string[]) ?? [],
 			safe_anchor: location.safe_anchor ?? false,
 			draft: (location as any).draft === true,
@@ -76,6 +84,9 @@ export const actions: Actions = {
 	pick: async ({ request, params, locals, cookies, url }) => {
 		if (!locals.session_token) return fail(401, { error: "not signed in" });
 		const form = await request.formData();
+		// The page sends original_index (the index into the unfiltered
+		// options array) so the server can still look up the full option
+		// even though the UI only showed a subset.
 		const optionIndex = Number(form.get("option_index") ?? -1);
 		if (!Number.isInteger(optionIndex) || optionIndex < 0) {
 			return fail(400, { error: "bad option" });

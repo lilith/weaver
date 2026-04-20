@@ -115,27 +115,57 @@ resolve_target("chapel") →
 
 ### `create_location` (the big one)
 
+Generated locations land as **drafts** — author-only, not on the shared map — and accumulate into a **journey** until the character returns to a canonical location. See `19_JOURNEYS_AND_JOURNAL.md` for the journey/journal UX that lets players keep the dreams that mattered and let the rest fade. The old inline "save to map" card per-location is gone; the save decision is deferred to the journey's close.
+
 ```
 classify_atom(text="I climb the chapel tower") → {atom: "create_location", description: "chapel tower"}
   ↓
-spawn_stub(description, parent=current_location, author=player) →
-  enqueue generate_location_content(stub_id)
-  enqueue generate_location_art(stub_id)
-  move player into stub (shows "the scene is forming..." placeholder)
-  ↓
 generate_location_content (opus, 2-4s):
   prompt = world_bible (cached, 90% off) + neighbors + hint
+         + bias-toward-known-biomes-and-locations prompt fragment
   opus returns JSON matching LocationSchema
-  validate → insert → update stub
-  player sees new description; options appear
+  validate → insert entity with { draft: true, expanded_from_entity_id: <parent> }
   ↓
-generate_location_art (fal.ai FLUX.2, 4-7s):
-  prompt = style_anchor + biome_anchor + location_description
-  refs = [style_ref, biome_anchor_ref, any relevant character refs]
-  fal.ai returns image URL
-  upload to R2, update entity.art_ref
-  (player probably already moved on; next visit shows art)
+recordJourneyTransition(ctx, character, dest=draft):
+  if no open journey: open one with dest as entity[0]
+  else: append dest to journey entity list
+  ↓
+scheduleArtForEntity (fal.ai FLUX → R2 blob, async):
+  action loads bible style + biome prompt + location prose
+  FLUX.2 [pro] gen; download bytes; upload to R2 via S3
+  internal mutation writes blob row + patches entity.art_blob_hash + art_status=ready
+  (player probably already moved on; next visit shows art; storybook placeholder meanwhile)
+  ↓
+player moves back to a canonical location:
+  recordJourneyTransition(ctx, character, dest=canonical):
+    close current journey; set status=closed
+  UI shows the single cluster panel: "You wandered through N places. Keep any?"
+  user ticks a subset → journeys.resolveJourney batches saveToMap
 ```
+
+**Click-into-nowhere chain.** When the player taps an option whose `target` slug doesn't resolve yet (Opus-generated options often reference places that don't exist — "Climb higher", "Step into the light"), `applyOption` returns `needs_expansion: { hint: option.label }` instead of failing silently. SvelteKit chains into the expansion action using the label as the hint, then redirects to the newly-created draft. One click still = one transition, with a ~5-8s Opus latency instead of a no-op.
+
+### Biome-bias prompt pattern
+
+Opus, given a broad world bible, tends to invent new biomes mid-world. That fractures the visual anchor and makes downstream art re-generation harder. The expansion prompt biases toward existing biomes and — where structurally appropriate — existing locations:
+
+```
+<expansion_guidance>
+Prefer biomes that already exist in this world. Only invent a new biome if
+the player's input genuinely describes somewhere outside every existing
+biome's scope. The world's current biomes are:
+  - forest: {description}
+  - village: {description}
+  - stone_tower: {description}
+
+Prefer connecting the new location to existing neighbors where plausible.
+Existing locations adjacent to "{parent_name}" include:
+  - forest_clearing_42 (forest)
+  - village_square (village)
+</expansion_guidance>
+```
+
+Empirically this keeps Quiet Vale visually coherent across hundreds of drafts.
 
 ### Opus prompt template for `create_location`
 

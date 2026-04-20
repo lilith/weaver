@@ -62,6 +62,11 @@ export default defineSchema({
     parent_branch_id: v.optional(v.id("branches")),
     transient: v.boolean(),
     expires_at: v.optional(v.number()),
+    // Branch-scoped mutable state: { time: { iso, hhmm, day_of_week,
+    // day_counter, week_counter }, turn, weather?, flags? }. Seed on
+    // world creation from bible.world_time; tick advanced on every
+    // applyOption.
+    state: v.optional(v.any()),
     created_at: v.number(),
   })
     .index("by_world", ["world_id"])
