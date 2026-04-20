@@ -93,6 +93,13 @@ export default defineSchema({
     schema_version: v.number(),
     author_user_id: v.optional(v.id("users")),
     author_pseudonym: v.optional(v.string()),
+    // Draft = a place the player dreamed up but hasn't pinned to the
+    // shared map. Visible/reachable only by the author until saveToMap
+    // runs. Absent / false = canonical.
+    draft: v.optional(v.boolean()),
+    // For drafts: the entity they were expanded from, so saveToMap
+    // knows which parent's options to extend.
+    expanded_from_entity_id: v.optional(v.id("entities")),
     created_at: v.number(),
     updated_at: v.number(),
   })

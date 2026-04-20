@@ -39,7 +39,8 @@ export const load: PageServerLoad = async ({ params, locals, parent }) => {
 			description,
 			options: (location.options as any[]) ?? [],
 			tags: (location.tags as string[]) ?? [],
-			safe_anchor: location.safe_anchor ?? false
+			safe_anchor: location.safe_anchor ?? false,
+			draft: (location as any).draft === true
 		},
 		palette: palette
 			? { slug: palette.slug, name: palette.name, mood: palette.mood, css: paletteCss }
@@ -77,6 +78,26 @@ export const actions: Actions = {
 			redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
 		}
 		return { says: result.says };
+	},
+
+	save: async ({ params, locals }) => {
+		if (!locals.session_token) return fail(401, { error: "not signed in" });
+		const client = convexServer();
+		const world = await client.query(api.worlds.getBySlugForMe, {
+			session_token: locals.session_token,
+			slug: params.world_slug
+		});
+		if (!world) return fail(404, { error: "world not found" });
+		try {
+			await client.mutation(api.locations.saveToMap, {
+				session_token: locals.session_token,
+				world_id: world._id,
+				location_slug: params.loc_slug
+			});
+		} catch (e) {
+			return fail(500, { error: (e as Error).message });
+		}
+		return { saved: true };
 	},
 
 	expand: async ({ request, params, locals }) => {

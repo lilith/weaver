@@ -200,6 +200,17 @@ export const insertExpandedLocation = internalMutation({
 
     const now = Date.now();
     const hash = await writeJSONBlob(ctx as any, loc);
+    // Look up the parent so saveToMap can extend its options later.
+    const parentEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q) =>
+        q
+          .eq("branch_id", branch_id)
+          .eq("type", "location")
+          .eq("slug", parent_location_slug),
+      )
+      .first();
+
     const entityId = await ctx.db.insert("entities", {
       world_id,
       branch_id,
@@ -209,6 +220,8 @@ export const insertExpandedLocation = internalMutation({
       schema_version: 1,
       author_user_id: user_id,
       author_pseudonym: user.display_name ?? user.email,
+      draft: true,
+      expanded_from_entity_id: parentEntity?._id,
       created_at: now,
       updated_at: now,
     });
