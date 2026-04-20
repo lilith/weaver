@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from "./$types";
 import { convexServer } from "$lib/convex";
 import { api } from "$convex/_generated/api";
 import { renderTemplate } from "@weaver/engine/template";
+import { getBiomePalette, paletteToCss } from "@weaver/engine/biomes";
 
 export const load: PageServerLoad = async ({ params, locals, parent }) => {
 	const { character, world } = await parent();
@@ -25,6 +26,9 @@ export const load: PageServerLoad = async ({ params, locals, parent }) => {
 	};
 	const description = renderTemplate(location.description_template as string, ctx as any);
 
+	const palette = getBiomePalette(location.biome as string);
+	const paletteCss = palette ? paletteToCss(palette) : null;
+
 	return {
 		location: {
 			entity_id: location.entity_id,
@@ -36,7 +40,10 @@ export const load: PageServerLoad = async ({ params, locals, parent }) => {
 			options: (location.options as any[]) ?? [],
 			tags: (location.tags as string[]) ?? [],
 			safe_anchor: location.safe_anchor ?? false
-		}
+		},
+		palette: palette
+			? { slug: palette.slug, name: palette.name, mood: palette.mood, css: paletteCss }
+			: null
 	};
 };
 

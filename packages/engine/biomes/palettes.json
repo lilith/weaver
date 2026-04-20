@@ -1,0 +1,134 @@
+{
+  "generated_at": "2026-04-20T02:40:05.997Z",
+  "model": "claude-opus-4-7",
+  "palettes": [
+    {
+      "slug": "village",
+      "name": "Village",
+      "mood": "Chimney smoke curls gold against a waking sky.",
+      "overrides": {
+        "--color-ink-950": "#1a140e",
+        "--color-ink-900": "#2a1f14",
+        "--color-velvet-800": "#3d2e1e",
+        "--color-velvet-700": "#54402a",
+        "--color-candle-300": "#ffd89a",
+        "--color-mist-400": "#d6c2a0"
+      }
+    },
+    {
+      "slug": "forest",
+      "name": "Old Growth",
+      "mood": "Ferns breathe under cathedrals of green silence.",
+      "overrides": {
+        "--color-ink-950": "#0a1410",
+        "--color-ink-900": "#12201a",
+        "--color-velvet-800": "#1c3326",
+        "--color-velvet-700": "#2a4a36",
+        "--color-candle-300": "#e8e09a",
+        "--color-teal-400": "#7ae0a0",
+        "--color-mist-400": "#b8c9a8"
+      }
+    },
+    {
+      "slug": "urban-fantasy",
+      "name": "Neon Hexwork",
+      "mood": "Rain writes sigils on every mirrored street.",
+      "overrides": {
+        "--color-ink-950": "#0a0a1f",
+        "--color-ink-900": "#14122e",
+        "--color-velvet-800": "#241a4a",
+        "--color-velvet-700": "#3a2a6e",
+        "--color-rose-400": "#ff5ce0",
+        "--color-teal-400": "#5cf0ff",
+        "--color-candle-300": "#d8a8ff"
+      }
+    },
+    {
+      "slug": "skyrise",
+      "name": "Skyrise",
+      "mood": "Glass towers above, a lamp-lit map below.",
+      "overrides": {
+        "--color-ink-950": "#0e1420",
+        "--color-ink-900": "#1a2236",
+        "--color-velvet-800": "#2a3550",
+        "--color-velvet-700": "#3e4c70",
+        "--color-candle-300": "#ffd070",
+        "--color-mist-100": "#eaf2ff",
+        "--color-mist-400": "#a8b8d4"
+      }
+    },
+    {
+      "slug": "city",
+      "name": "Sodium City",
+      "mood": "Wet asphalt and the far cry of sirens.",
+      "overrides": {
+        "--color-ink-950": "#120e0a",
+        "--color-ink-900": "#1e1812",
+        "--color-velvet-800": "#2e2416",
+        "--color-velvet-700": "#46381e",
+        "--color-candle-300": "#ffb84a",
+        "--color-candle-500": "#ff8020",
+        "--color-mist-400": "#b8a890"
+      }
+    },
+    {
+      "slug": "warehouse",
+      "name": "Warehouse",
+      "mood": "Fluorescents hum over something that shouldn't be here.",
+      "overrides": {
+        "--color-ink-950": "#14161a",
+        "--color-ink-900": "#1e2124",
+        "--color-velvet-800": "#2e3236",
+        "--color-velvet-700": "#444a50",
+        "--color-candle-300": "#e8f0d8",
+        "--color-teal-400": "#a0e090",
+        "--color-mist-100": "#f0f4ea",
+        "--color-mist-400": "#9aa49a"
+      }
+    },
+    {
+      "slug": "dungeon",
+      "name": "Dungeon",
+      "mood": "Torchlight gutters; the dark drips back.",
+      "overrides": {
+        "--color-ink-950": "#0a0806",
+        "--color-ink-900": "#14100a",
+        "--color-velvet-800": "#241c14",
+        "--color-velvet-700": "#382a1e",
+        "--color-candle-300": "#ffb060",
+        "--color-candle-500": "#d06020",
+        "--color-mist-400": "#a89888"
+      }
+    },
+    {
+      "slug": "endless-abyss",
+      "name": "Endless Abyss",
+      "mood": "A bruise that goes on forever, lit by nothing.",
+      "overrides": {
+        "--color-ink-950": "#0a0618",
+        "--color-ink-900": "#140a28",
+        "--color-velvet-800": "#2a1248",
+        "--color-velvet-700": "#3e1e68",
+        "--color-rose-400": "#c070ff",
+        "--color-teal-400": "#80a8ff",
+        "--color-candle-300": "#b8a0e8",
+        "--color-mist-400": "#9e90c4"
+      }
+    },
+    {
+      "slug": "inn",
+      "name": "The Inn",
+      "mood": "Firelight, fresh bread, the door latched against the night.",
+      "overrides": {
+        "--color-ink-950": "#18100a",
+        "--color-ink-900": "#241810",
+        "--color-velvet-800": "#3a2416",
+        "--color-velvet-700": "#543420",
+        "--color-candle-300": "#ffd880",
+        "--color-candle-400": "#ffa850",
+        "--color-rose-400": "#ff9878",
+        "--color-mist-100": "#fbecd0"
+      }
+    }
+  ]
+}

@@ -5,16 +5,26 @@
 	let inputEl = $state<HTMLTextAreaElement | undefined>();
 </script>
 
+<svelte:head>
+	{#if data.palette}
+		{@html `<style id="biome-palette">${data.palette.css}</style>`}
+	{/if}
+</svelte:head>
+
 <article class="space-y-6 pb-24">
 	<header class="space-y-1">
 		<h1 class="font-display text-4xl tracking-tight text-mist-100 sm:text-5xl">
 			{data.location.name}
 		</h1>
-		{#if data.location.author_pseudonym}
-			<p class="font-hand text-base text-candle-300">
-				✦ discovered by {data.location.author_pseudonym}
-			</p>
-		{/if}
+		<div class="flex flex-wrap items-center gap-3 text-sm">
+			{#if data.palette}
+				<span class="text-candle-300">{data.palette.name}</span>
+				<span class="font-hand text-base text-mist-400">· {data.palette.mood}</span>
+			{/if}
+			{#if data.location.author_pseudonym}
+				<span class="font-hand text-base text-teal-400">✦ by {data.location.author_pseudonym}</span>
+			{/if}
+		</div>
 	</header>
 
 	<section class="story-prose">
