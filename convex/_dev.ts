@@ -115,6 +115,78 @@ export const preauthorizeHousehold = internalMutation({
   },
 });
 
+/**
+ * Transfer ownership of every world currently owned by `old_primary_email`
+ * to `new_primary_email`. The old primary is demoted to `role: "player"`
+ * on each of those worlds (still has access). New primary gets/keeps
+ * `role: "owner"`. Idempotent: worlds already owned by new primary are
+ * skipped; membership rows patched in-place.
+ */
+export const reseatPrimaryOwner = internalMutation({
+  args: {
+    old_primary_email: v.string(),
+    new_primary_email: v.string(),
+  },
+  handler: async (ctx, { old_primary_email, new_primary_email }) => {
+    const oldUser = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", old_primary_email.trim().toLowerCase()))
+      .first();
+    if (!oldUser) throw new Error(`old primary ${old_primary_email} not found`);
+    const newUser = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", new_primary_email.trim().toLowerCase()))
+      .first();
+    if (!newUser) throw new Error(`new primary ${new_primary_email} not found`);
+
+    const worlds = await ctx.db
+      .query("worlds")
+      .withIndex("by_owner", (q) => q.eq("owner_user_id", oldUser._id))
+      .collect();
+
+    const summary = [];
+    for (const w of worlds) {
+      await ctx.db.patch(w._id, { owner_user_id: newUser._id });
+
+      // Demote old primary's membership on this world to player.
+      const oldMember = await ctx.db
+        .query("world_memberships")
+        .withIndex("by_world_user", (q) =>
+          q.eq("world_id", w._id).eq("user_id", oldUser._id),
+        )
+        .first();
+      if (oldMember) {
+        await ctx.db.patch(oldMember._id, { role: "player" });
+      }
+
+      // Add or upgrade new primary's membership to owner.
+      const newMember = await ctx.db
+        .query("world_memberships")
+        .withIndex("by_world_user", (q) =>
+          q.eq("world_id", w._id).eq("user_id", newUser._id),
+        )
+        .first();
+      if (newMember) {
+        if (newMember.role !== "owner") {
+          await ctx.db.patch(newMember._id, { role: "owner" });
+        }
+      } else {
+        await ctx.db.insert("world_memberships", {
+          world_id: w._id,
+          user_id: newUser._id,
+          role: "owner",
+          created_at: Date.now(),
+        });
+      }
+      summary.push({ world_slug: w.slug, world_name: w.name });
+    }
+    return {
+      worlds_transferred: worlds.length,
+      details: summary,
+    };
+  },
+});
+
 export const ensureSessionForEmail = internalMutation({
   args: { email: v.string(), session_token_hash: v.string() },
   handler: async (ctx, { email, session_token_hash }) => {
