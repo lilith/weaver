@@ -215,6 +215,208 @@ test.describe("Isolation — cross-user", () => {
 		expect(out).toBeNull();
 	});
 
+	test("B cannot push content into A's world via cli.pushEntityPayload", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.cli.pushEntityPayload, {
+					session_token: tokenB,
+					world_slug: slug,
+					type: "location",
+					slug: "village-square",
+					payload_json: JSON.stringify({ name: "hijacked" })
+				}),
+			"cli.pushEntityPayload"
+		);
+	});
+
+	test("B cannot fast-forward A's clock", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.cli.fastForwardClock, {
+					session_token: tokenB,
+					world_slug: slug,
+					delta_minutes: 1000
+				}),
+			"cli.fastForwardClock"
+		);
+	});
+
+	test("B cannot set state on A's character", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.cli.setCharacterState, {
+					session_token: tokenB,
+					world_slug: slug,
+					path: "hp",
+					value_json: "999"
+				}),
+			"cli.setCharacterState"
+		);
+	});
+
+	test("B cannot teleport in A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.cli.teleportCharacter, {
+					session_token: tokenB,
+					world_slug: slug,
+					loc_slug: "mara-cottage"
+				}),
+			"cli.teleportCharacter"
+		);
+	});
+
+	test("B cannot fix entity fields in A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.cli.fixEntityField, {
+					session_token: tokenB,
+					world_slug: slug,
+					type: "location",
+					slug: "village-square",
+					field: "name",
+					new_value_json: JSON.stringify("Pwned")
+				}),
+			"cli.fixEntityField"
+		);
+	});
+
+	test("B cannot dumpLocation from A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.cli.dumpLocation, {
+					session_token: tokenB,
+					world_slug: slug,
+					loc_slug: "village-square"
+				}),
+			"cli.dumpLocation"
+		);
+	});
+
+	test("B cannot exportWorld A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.cli.exportWorld, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"cli.exportWorld"
+		);
+	});
+
+	test("B cannot set world-scoped flag on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.flags.set, {
+					session_token: tokenB,
+					flag_key: "flag.biome_rules",
+					scope_kind: "world",
+					scope_id: slug,
+					enabled: true
+				}),
+			"flags.set(world)"
+		);
+	});
+
+	test("B cannot ensurePrefetched against A's location", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		await expectForbidden(
+			() =>
+				client.action(api.expansion.ensurePrefetched, {
+					session_token: tokenB,
+					world_id: worldId as any,
+					location_slug: "village-square"
+				}),
+			"expansion.ensurePrefetched"
+		);
+	});
+
+	test("B cannot startFlow in A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.action(api.flows.startFlow, {
+					session_token: tokenB,
+					world_slug: slug,
+					module: "counter",
+					initial_state: { target: 1 }
+				}),
+			"flows.startFlow"
+		);
+	});
+
+	test("B cannot read A's flows via listMyFlows", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.flows.listMyFlows, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"flows.listMyFlows"
+		);
+	});
+
+	test("B cannot add NPC memory in A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.npc_memory.addForNpc, {
+					session_token: tokenB,
+					world_slug: slug,
+					npc_slug: "mara",
+					event_type: "pwn",
+					summary: "B tried to write here"
+				}),
+			"npc_memory.addForNpc"
+		);
+	});
+
+	test("B cannot listForNpc against A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.npc_memory.listForNpc, {
+					session_token: tokenB,
+					world_slug: slug,
+					npc_slug: "mara"
+				}),
+			"npc_memory.listForNpc"
+		);
+	});
+
 	test("B cannot import a world over A's slug", async () => {
 		const client = new ConvexHttpClient(CONVEX_URL);
 		// Any legit world_slug will do — we're testing the slug-collision guard.

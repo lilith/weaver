@@ -287,6 +287,8 @@ async function dispatch() {
       return cmdMemory(rest);
     case "flow":
       return cmdFlow(rest);
+    case "art":
+      return cmdArt(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -1609,6 +1611,52 @@ function renderFlowResult(r) {
     if (r.ui.free_text) lines.push(`  (or free text)`);
   }
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------
+// Commands: art (regen / show — full curation with variants pending
+// FEATURE_REGISTRY #12 art_curation)
+
+async function cmdArt([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "show") {
+    const [slug, typeArg] = a;
+    if (!slug) err("usage: weaver art show <entity_slug> [type=location]", 2);
+    const t = typeArg ?? "location";
+    const e = await client.query(ref("cli.getEntity"), {
+      session_token: cfg.session_token,
+      world_slug,
+      type: t,
+      slug,
+    });
+    if (!e) err(`entity not found: ${t}/${slug}`, 3);
+    return out(
+      {
+        id: e.id,
+        type: e.type,
+        slug: e.slug,
+        // art_blob_hash + art_status are entity-row fields; not in payload
+        // but the listEntities query surfaced them. Re-query via listEntities
+        // for the same info plus status.
+      },
+      (o) => `entity ${o.type}/${o.slug} id=${o.id}`,
+    );
+  }
+  if (sub === "regen") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: regen is author-only", 2);
+    const [slug] = a;
+    if (!slug) err("usage: weaver art regen <location_slug>", 2);
+    const r = await client.action(ref("art.regenerateArt"), {
+      session_token: cfg.session_token,
+      world_id: cfg.world_id,
+      location_slug: slug,
+    });
+    return out(r, () => `regen queued for location/${slug}`);
+  }
+  err("usage: weaver art [show|regen] <slug> [type]", 2);
 }
 
 // ---------------------------------------------------------------
