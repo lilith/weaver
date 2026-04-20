@@ -152,3 +152,7 @@ test-results/
 # Research — upstream clones of third-party engines for reference only
 /research/
 
+# Convex-generated stubs — auto-regenerated. The real convex codebase
+# lives at repo root; the apps/play path is a svelte-kit-sync artifact.
+apps/play/convex/
+
