@@ -1,11 +1,19 @@
 // Journeys — tracks runs of draft locations between canonical stops,
 // plus the journal UI's data layer. See spec/19_JOURNEYS_AND_JOURNAL.md.
 
-import { query, mutation } from "./_generated/server.js";
+import {
+  query,
+  mutation,
+  internalAction,
+  internalQuery,
+  internalMutation,
+} from "./_generated/server.js";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel.js";
 import { resolveMember, resolveSession } from "./sessions.js";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
+import { internal } from "./_generated/api.js";
+import Anthropic from "@anthropic-ai/sdk";
 
 // ---------------------------------------------------------------
 // Helpers (called from applyOption + expandFromFreeText's mutation path)
@@ -63,6 +71,11 @@ export async function recordJourneyTransition(
   // Canonical arrival. If a journey is open with entries, close it.
   if (open && open.entity_ids.length > 0) {
     await ctx.db.patch(open._id, { closed_at: now, status: "closed" });
+    // Async: generate a one-sentence cluster tag so the journal + close
+    // panel can show it without blocking render.
+    await ctx.scheduler.runAfter(0, internal.journeys.summarizeJourney, {
+      journey_id: open._id,
+    });
     return { closed_journey_id: open._id };
   }
   if (open) {
@@ -109,8 +122,11 @@ export const getJourney = query({
   handler: async (ctx, { session_token, journey_id }) => {
     const journey = await ctx.db.get(journey_id);
     if (!journey) return null;
-    const { user_id } = await resolveMember(ctx, session_token, journey.world_id);
-    if (journey.user_id !== user_id) return null; // soft 404 for non-owners
+    // Don't throw for non-owners — soft-404 so the existence of a
+    // journey_id never leaks cross-user. user_id equality is the only
+    // check needed; journey.user_id is isolation's strong link.
+    const { user_id } = await resolveSession(ctx, session_token);
+    if (journey.user_id !== user_id) return null;
 
     const entities = [];
     for (const entity_id of journey.entity_ids) {
@@ -275,6 +291,96 @@ export const resolveJourney = mutation({
     });
 
     return { saved, total: journey.entity_ids.length };
+  },
+});
+
+// ---------------------------------------------------------------
+// Summary — Sonnet cluster-tag, populated async on journey close.
+
+export const summarizeJourney = internalAction({
+  args: { journey_id: v.id("journeys") },
+  handler: async (ctx, { journey_id }) => {
+    const details: {
+      descriptions: string[];
+      existing_summary?: string | null;
+    } | null = await ctx.runQuery(internal.journeys.loadSummaryContext, {
+      journey_id,
+    });
+    if (!details) return;
+    if (details.existing_summary) return; // don't re-summarize
+    if (details.descriptions.length === 0) return;
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const system =
+      "You read a sequence of location descriptions from a collaborative story-game and return a single sentence (≤80 characters) that captures the cluster. If the places don't feel like one coherent arc, say so briefly. Plain text. No quotes, no preamble.";
+    const user = details.descriptions
+      .map((d, i) => `${i + 1}. ${d.replace(/\s+/g, " ").slice(0, 400)}`)
+      .join("\n\n");
+
+    let summary = "";
+    try {
+      const resp = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 120,
+        system,
+        messages: [{ role: "user", content: user }],
+      });
+      summary =
+        resp.content
+          .filter((c: any) => c.type === "text")
+          .map((c: any) => c.text)
+          .join("")
+          .trim()
+          .replace(/^["']|["']$/g, "")
+          .slice(0, 120) ?? "";
+    } catch (e) {
+      console.error(`[journeys] summarize ${journey_id}: ${(e as Error).message}`);
+      return;
+    }
+    if (summary) {
+      await ctx.runMutation(internal.journeys.patchSummary, {
+        journey_id,
+        summary,
+      });
+    }
+  },
+});
+
+export const loadSummaryContext = internalQuery({
+  args: { journey_id: v.id("journeys") },
+  handler: async (ctx, { journey_id }) => {
+    const j = await ctx.db.get(journey_id);
+    if (!j) return null;
+    const descriptions: string[] = [];
+    for (const id of j.entity_ids) {
+      const e = await ctx.db.get(id);
+      if (!e) continue;
+      const v = await ctx.db
+        .query("artifact_versions")
+        .withIndex("by_artifact_version", (q) =>
+          q.eq("artifact_entity_id", e._id).eq("version", e.current_version),
+        )
+        .first();
+      if (!v) continue;
+      const payload = await readJSONBlob<{
+        name?: string;
+        description_template?: string;
+      }>(ctx as any, v.blob_hash);
+      const label = payload?.name ? `${payload.name}: ` : "";
+      const body = (payload?.description_template ?? "").replace(/\{\{.*?\}\}/g, "");
+      descriptions.push(label + body);
+    }
+    return {
+      descriptions,
+      existing_summary: j.summary ?? null,
+    };
+  },
+});
+
+export const patchSummary = internalMutation({
+  args: { journey_id: v.id("journeys"), summary: v.string() },
+  handler: async (ctx, { journey_id, summary }) => {
+    await ctx.db.patch(journey_id, { summary });
   },
 });
 
