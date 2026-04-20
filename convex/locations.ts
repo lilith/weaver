@@ -144,6 +144,7 @@ export const applyOption = mutation({
 
     let newLocationSlug: string | null = null;
     let newLocationId: Id<"entities"> | null = null;
+    let needsExpansion: { hint: string } | null = null;
     if (gotoSlug) {
       const target = await ctx.db
         .query("entities")
@@ -157,6 +158,11 @@ export const applyOption = mutation({
       if (target) {
         newLocationId = target._id;
         newLocationSlug = target.slug;
+      } else {
+        // Unresolved target — the authored / generated option points at a
+        // slug that hasn't been created yet. Signal the client to run the
+        // expansion loop with the option's label as the hint.
+        needsExpansion = { hint: option.label };
       }
     }
 
@@ -166,7 +172,7 @@ export const applyOption = mutation({
       updated_at: Date.now(),
     });
 
-    return { says, new_location_slug: newLocationSlug };
+    return { says, new_location_slug: newLocationSlug, needs_expansion: needsExpansion };
   },
 });
 

@@ -77,6 +77,25 @@ export const actions: Actions = {
 		if (result.new_location_slug) {
 			redirect(303, `/play/${params.world_slug}/${result.new_location_slug}`);
 		}
+		// If the option pointed at a slug that doesn't exist yet, chain
+		// into the expansion loop so the click actually goes somewhere.
+		if (result.needs_expansion?.hint) {
+			let expanded;
+			try {
+				expanded = await client.action(api.expansion.expandFromFreeText, {
+					session_token: locals.session_token,
+					world_id: world._id,
+					location_slug: params.loc_slug,
+					input: result.needs_expansion.hint
+				});
+			} catch (e) {
+				return fail(500, { error: (e as Error).message });
+			}
+			if (expanded.kind === "goto") {
+				redirect(303, `/play/${params.world_slug}/${expanded.new_location_slug}`);
+			}
+			return { says: result.says, narrate: expanded.text };
+		}
 		return { says: result.says };
 	},
 
