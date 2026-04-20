@@ -100,6 +100,18 @@ export default defineSchema({
     // For drafts: the entity they were expanded from, so saveToMap
     // knows which parent's options to extend.
     expanded_from_entity_id: v.optional(v.id("entities")),
+    // Scene / portrait art for this entity — blob hash (stored in R2).
+    // Regenerates on explicit user action; otherwise sticky once set.
+    art_blob_hash: v.optional(v.string()),
+    // Latest art-gen status so the UI can show "forming…" hints.
+    art_status: v.optional(
+      v.union(
+        v.literal("queued"),
+        v.literal("generating"),
+        v.literal("ready"),
+        v.literal("failed"),
+      ),
+    ),
     created_at: v.number(),
     updated_at: v.number(),
   })

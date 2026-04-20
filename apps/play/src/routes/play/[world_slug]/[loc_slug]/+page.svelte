@@ -25,7 +25,18 @@
 </svelte:head>
 
 <article class="space-y-6 pb-24">
-	<header class="space-y-1">
+	<header class="space-y-2">
+		<div class="scene-art" class:scene-art-loading={!data.location.art_url}>
+			{#if data.location.art_url}
+				<img src={data.location.art_url} alt="" class="scene-art-img" loading="lazy" />
+			{:else if data.location.art_status === 'generating' || data.location.art_status === 'queued'}
+				<div class="scene-art-fallback">
+					<span class="font-hand text-candle-300">the scene is forming…</span>
+				</div>
+			{:else}
+				<div class="scene-art-fallback"></div>
+			{/if}
+		</div>
 		<h1 class="font-display text-4xl tracking-tight text-mist-100 sm:text-5xl">
 			{#if data.location.draft}
 				<span class="dream-glyph" title="a dream — not yet on the map">✦</span>
@@ -198,6 +209,53 @@
 </article>
 
 <style>
+	.scene-art {
+		position: relative;
+		aspect-ratio: 16 / 9;
+		width: 100%;
+		border-radius: var(--radius-card);
+		overflow: hidden;
+		box-shadow: var(--shadow-panel);
+		background: linear-gradient(
+			145deg,
+			var(--color-velvet-800),
+			var(--color-ink-900)
+		);
+	}
+	.scene-art-img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+	.scene-art-fallback {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background:
+			radial-gradient(circle at 30% 30%, rgba(240, 80, 128, 0.14), transparent 55%),
+			radial-gradient(circle at 70% 70%, rgba(92, 224, 181, 0.1), transparent 55%),
+			linear-gradient(135deg, var(--color-velvet-700), var(--color-ink-900));
+	}
+	.scene-art-loading::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(
+			90deg,
+			transparent,
+			rgba(253, 213, 122, 0.08),
+			transparent
+		);
+		animation: shimmer 2.2s linear infinite;
+	}
+	@keyframes shimmer {
+		0% { transform: translateX(-100%); }
+		100% { transform: translateX(100%); }
+	}
+
 	.dream-glyph {
 		display: inline-block;
 		color: var(--color-candle-300);

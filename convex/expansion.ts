@@ -14,6 +14,7 @@ import type { Id } from "./_generated/dataModel.js";
 import { resolveSession, resolveMember } from "./sessions.js";
 import { writeJSONBlob, readJSONBlob } from "./blobs.js";
 import { recordJourneyTransition } from "./journeys.js";
+import { scheduleArtForEntity } from "./art.js";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 2048;
@@ -262,6 +263,10 @@ export const insertExpandedLocation = internalMutation({
       current_location_id: entityId,
       updated_at: now,
     });
+
+    // Kick off scene art — async; page renders text instantly, image
+    // appears on next visit (or refresh) when FLUX finishes.
+    await scheduleArtForEntity(ctx, entityId);
 
     return { new_location_slug: finalSlug };
   },

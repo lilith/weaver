@@ -48,6 +48,10 @@ export const getBySlug = query({
       .first();
     if (!entity) return null;
     const payload = await readAuthoredPayload<Record<string, unknown>>(ctx, entity);
+    const art_url =
+      entity.art_blob_hash && process.env.R2_IMAGES_PUBLIC_URL
+        ? `${process.env.R2_IMAGES_PUBLIC_URL}/blob/${entity.art_blob_hash.slice(0, 2)}/${entity.art_blob_hash.slice(2, 4)}/${entity.art_blob_hash}`
+        : null;
     return {
       entity_id: entity._id,
       author_pseudonym: entity.author_pseudonym,
@@ -55,6 +59,8 @@ export const getBySlug = query({
       version: entity.current_version,
       draft: entity.draft === true,
       expanded_from_entity_id: entity.expanded_from_entity_id,
+      art_url,
+      art_status: entity.art_status ?? null,
       ...payload,
     };
   },

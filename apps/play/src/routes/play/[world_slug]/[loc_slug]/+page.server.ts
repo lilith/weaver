@@ -61,7 +61,9 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 			options: (location.options as any[]) ?? [],
 			tags: (location.tags as string[]) ?? [],
 			safe_anchor: location.safe_anchor ?? false,
-			draft: (location as any).draft === true
+			draft: (location as any).draft === true,
+			art_url: (location as any).art_url ?? null,
+			art_status: (location as any).art_status ?? null
 		},
 		palette: palette
 			? { slug: palette.slug, name: palette.name, mood: palette.mood, css: paletteCss }

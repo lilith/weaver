@@ -8,6 +8,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel.js";
 import { writeJSONBlob } from "./blobs.js";
 import { resolveSession } from "./sessions.js";
+import { scheduleArtForEntity } from "./art.js";
 
 type Template = "quiet-vale";
 
@@ -206,12 +207,16 @@ export const seedStarterWorld = mutation({
       LOCATION_VILLAGE_SQUARE.slug,
       LOCATION_VILLAGE_SQUARE.author_pseudonym,
     );
-    await authorEntity(
+    const maraCottageId = await authorEntity(
       "location",
       LOCATION_MARA_COTTAGE as Record<string, unknown>,
       LOCATION_MARA_COTTAGE.slug,
       LOCATION_MARA_COTTAGE.author_pseudonym,
     );
+
+    // Kick off scene-art generation for the seeded locations. Async.
+    await scheduleArtForEntity(ctx, villageSquareId);
+    await scheduleArtForEntity(ctx, maraCottageId);
 
     // The caller's character for this world.
     await ctx.db.insert("characters", {

@@ -9,6 +9,7 @@
  */
 
 import type * as _dev from "../_dev.js";
+import type * as art from "../art.js";
 import type * as auth from "../auth.js";
 import type * as blobs from "../blobs.js";
 import type * as characters from "../characters.js";
@@ -28,6 +29,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   _dev: typeof _dev;
+  art: typeof art;
   auth: typeof auth;
   blobs: typeof blobs;
   characters: typeof characters;
