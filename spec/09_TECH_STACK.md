@@ -16,9 +16,10 @@
 | Auth UI | @mmailaender/convex-better-auth-svelte | latest | |
 | Magic links | Resend | latest SDK | |
 | Validation | Zod | 3.x | Throughout |
+| Hashing (content-addressed blobs) | @noble/hashes | latest | BLAKE3 for blob hashes; see `12_BLOB_STORAGE.md` |
 | LLM SDK | @anthropic-ai/sdk | latest | |
 | Image gen | @fal-ai/client | latest | FLUX.2 [pro] |
-| Browser voice | @xenova/transformers | latest | Whisper WebGPU |
+| Browser voice | @xenova/transformers | latest | Whisper WebGPU; see `15_VOICE_INPUT.md` |
 | Rich text | CodeMirror 6 | latest | For inline script editor |
 | Code editor | Monaco (lazy) | latest | Desktop module designer only |
 | Animation | Motion | latest | Framer Motion's Svelte-friendly successor |
@@ -52,7 +53,7 @@ cd apps/play
 pnpm dlx sv create . --template minimal --types typescript
 pnpm add convex convex-svelte convex-sveltekit
 pnpm add tailwindcss@4 @tailwindcss/vite
-pnpm add @xenova/transformers @fal-ai/client @anthropic-ai/sdk zod
+pnpm add @xenova/transformers @fal-ai/client @anthropic-ai/sdk zod @noble/hashes
 pnpm add vite-plugin-pwa
 pnpm add motion
 pnpm add -D @playwright/test vitest fast-check
@@ -145,8 +146,14 @@ export default defineSchema({
     world_id: v.id("worlds"),
     name: v.string(),
     parent_branch_id: v.optional(v.id("branches")),
+    fork_point_timestamp: v.optional(v.number()),     // point-in-time fork reference
+    transient: v.boolean(),                           // dreams + test branches set this true
+    expires_at: v.optional(v.number()),               // transient branches eligible for GC after this time
     created_at: v.number(),
-  }).index("by_world", ["world_id"]),
+    created_by: v.optional(v.id("users")),
+  })
+    .index("by_world", ["world_id"])
+    .index("by_expires", ["transient", "expires_at"]),  // for transient_branch_gc
 
   characters: defineTable({
     user_id: v.id("users"),
@@ -163,12 +170,26 @@ export default defineSchema({
     .index("by_user_world", ["user_id", "world_id"])
     .index("by_branch", ["branch_id"]),
 
+  // Content-addressed blob store (see 12_BLOB_STORAGE.md)
+  blobs: defineTable({
+    hash: v.string(),                       // BLAKE3 hex (32-byte truncation)
+    size: v.number(),                       // bytes
+    kind: v.string(),                       // "json" | "text" | "image/png" | "image/webp" | ...
+    storage: v.union(v.literal("inline"), v.literal("r2")),
+    inline_bytes: v.optional(v.bytes()),    // present iff storage=inline (≤4KB)
+    r2_key: v.optional(v.string()),         // present iff storage=r2
+    refcount: v.number(),                   // heads pointing at this blob; 0 = GC eligible
+    created_at: v.number(),
+  })
+    .index("by_hash", ["hash"])
+    .index("by_refcount", ["refcount"]),
+
   // The core entity-component-relation store
   entities: defineTable({
     type: v.string(),
     branch_id: v.id("branches"),
     world_id: v.id("worlds"),
-    version: v.number(),
+    current_version: v.number(),            // points at the latest artifact_versions row
     schema_version: v.number(),
     author_user_id: v.optional(v.id("users")),
     author_pseudonym: v.optional(v.string()),
@@ -182,11 +203,13 @@ export default defineSchema({
   components: defineTable({
     entity_id: v.id("entities"),
     component_type: v.string(),
-    payload: v.any(),
+    payload: v.optional(v.any()),           // inline only for ≤4KB payloads (hot-path reads)
+    blob_hash: v.optional(v.string()),      // set iff payload lives in the blob store
     schema_version: v.number(),
   })
     .index("by_entity_type", ["entity_id", "component_type"])
-    .index("by_type", ["component_type"]),
+    .index("by_type", ["component_type"])
+    .index("by_blob", ["blob_hash"]),
 
   relations: defineTable({
     subject_id: v.id("entities"),
@@ -295,17 +318,19 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_world_active", ["world_id", "active"]),
 
-  // Artifact version history (for rollback)
+  // Artifact version history (for rollback; see 11_PROMPT_EDITING.md, 12_BLOB_STORAGE.md)
   artifact_versions: defineTable({
     artifact_entity_id: v.id("entities"),
     version: v.number(),
-    payload: v.any(),
+    blob_hash: v.string(),                  // canonicalized payload in blob store
     author_user_id: v.id("users"),
     author_pseudonym: v.string(),
-    edit_kind: v.string(),   // "create" | "edit_prompt" | "edit_direct" | "restore"
+    edit_kind: v.string(),                  // "create" | "edit_prompt" | "edit_direct" | "restore"
     reason: v.optional(v.string()),
     created_at: v.number(),
-  }).index("by_artifact_version", ["artifact_entity_id", "version"]),
+  })
+    .index("by_artifact_version", ["artifact_entity_id", "version"])
+    .index("by_blob", ["blob_hash"]),
 })
 ```
 
@@ -404,6 +429,53 @@ Every call returns both the result and the cost. Cost is written to `cost_ledger
 - Single place to swap models.
 - Test-mode cache replay.
 - Budget enforcement (reject before exceeding per-world daily cap).
+
+### Cost-ledger daily-cap enforcement pattern
+
+Every AI call (LLM or image gen) passes through a check before dispatch:
+
+```ts
+// packages/engine/ai/costLedger.ts
+export async function checkBudgetOrThrow(ctx, { world_id, user_id, estimated_cost_usd }) {
+  const today_start = startOfUtcDay(Date.now())
+  // Per-user daily cap (minors, tunable adults)
+  if (user_id) {
+    const user = await ctx.db.get(user_id)
+    if (user.per_day_cost_cap_usd != null) {
+      const spent = await sumCostLedger(ctx, { user_id, since: today_start })
+      if (spent + estimated_cost_usd > user.per_day_cost_cap_usd) {
+        throw new BudgetExceeded("user_daily_cap", { spent, cap: user.per_day_cost_cap_usd })
+      }
+    }
+  }
+  // Per-world daily cap
+  const world = await ctx.db.get(world_id)
+  const world_spent = await sumCostLedger(ctx, { world_id, since: today_start })
+  if (world_spent + estimated_cost_usd > (world.per_day_cost_cap_usd ?? DEFAULT_WORLD_CAP)) {
+    throw new BudgetExceeded("world_daily_cap", { spent: world_spent, cap: world.per_day_cost_cap_usd })
+  }
+}
+```
+
+`BudgetExceeded` is caught at the handler boundary and routed to a graceful fallback: stub location, biome-fallback image, in-character "the world is resting" response. Caller is never blocked by an exception surface.
+
+### Scheduled actions (Convex cron)
+
+```
+convex/scheduled/
+├── transient_branch_gc.ts   # hourly — deletes branches where transient=true AND expires_at<now
+├── nightlyBackup.ts         # daily — exports each world to WEAVER_BACKUP_DIR (see AUTHORING_AND_SYNC.md)
+└── artWorker.ts             # every 10s — drains art_queue (see 04_EXPANSION_LOOP.md)
+```
+
+`transient_branch_gc` is the cleanup path for dreams + test branches. Transient branches set `expires_at` at creation (default 30 minutes for dream, 24 hours for test fork). The GC job:
+
+1. Scans `branches` by the `by_expires` index for `transient=true AND expires_at<now`.
+2. For each, deletes entity rows, component rows, relation rows, chat threads, flows, and events with matching `branch_id`. Payload blobs are left in place — they may be referenced elsewhere, and refcount GC handles them.
+3. A separate blob refcount GC (daily) removes blobs with `refcount=0` older than 7 days (grace period in case a fork races).
+4. Deletes the branch row last.
+
+This is why blob + branch architecture matters: the GC is trivial — delete heads rows, let blob refcounts do the rest.
 
 ## Model routing (Wave 1)
 

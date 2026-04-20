@@ -119,13 +119,13 @@ Optionally, a "retro-apply" action exists: regenerate art for existing locations
 
 ## Versioning
 
-Every artifact has a version history stored in `artifact_versions`:
+Every artifact has a version history stored in `artifact_versions`. Each version row carries a **content-addressed blob hash**, not the payload itself (see `12_BLOB_STORAGE.md`):
 
 ```ts
 {
   artifact_entity_id: "forest_clearing_42",
   version: 3,
-  payload: {...full snapshot of the artifact at this version...},
+  blob_hash: "blake3:a1b2c3d4...",      // canonicalized JSON payload in the blob store
   author_user_id: "user_jason",
   author_pseudonym: "Stardust",
   edit_kind: "edit_prompt",
@@ -134,7 +134,9 @@ Every artifact has a version history stored in `artifact_versions`:
 }
 ```
 
-On every edit (prompt or direct), a new version row is inserted. The live entity row is updated to point at the latest version. Rollback restores a prior version as the current (which itself is a new version with `edit_kind: "restore"`).
+On every edit (prompt or direct), the new payload is canonicalized, hashed, written to the blob store if the hash is new, and a version row is inserted pointing at that hash. The live entity row's `current_version` field is updated to point at the new version. **Rollback is a pointer update** — restoring an earlier version writes a new `artifact_versions` row with `edit_kind: "restore"` and the prior version's `blob_hash`; no payload copy.
+
+Identical payloads dedupe automatically (two users editing to the same final text write one blob). See `12_BLOB_STORAGE.md` for the hash algorithm, canonicalization rules, and storage tiers.
 
 ## Permissions
 

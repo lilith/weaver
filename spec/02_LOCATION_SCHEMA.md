@@ -272,6 +272,10 @@ Every location JSON is validated at insert/update time:
 
 Validation happens server-side in the Convex mutation that writes the entity. Client sees either success or a structured error listing which checks failed, so the browser designer can show them inline.
 
+### Where the payload lives
+
+The schema above defines the *shape* of a location. The *bytes* of a specific location's payload are stored as a content-addressed blob (see `12_BLOB_STORAGE.md`). The entity row carries the current version pointer; each version in `artifact_versions` carries a `blob_hash` referencing the canonicalized JSON. This means duplicate payloads (two identical forest clearings) deduplicate automatically, and version rollback is a pointer update, not a payload copy. The schema itself is unchanged — validation runs on the parsed JSON before its bytes are hashed and written.
+
 ## Testing a JSON location
 
 Each location ships with a fixtures file:

@@ -25,6 +25,18 @@ Every location, NPC, and encounter is rendered by one of three paths. The runtim
 
 The store is common. What differs is how behavior reaches the store.
 
+## Blob storage (foundational)
+
+Every durable payload in Weaver — location JSON, inline script source, world bible, theme JSON, image bytes, module source — is stored as an **immutable, content-addressed blob** (BLAKE3 hash → bytes). Mutable heads tables (entities, components, `artifact_versions`, etc.) carry `blob_hash` pointers, not inline payloads.
+
+See `12_BLOB_STORAGE.md` for the full design. Summary of consequences that ripple through the rest of this document:
+
+- Identical payloads deduplicate (two users edit to the same final text → one blob).
+- Version rollback is a pointer update; no payload copy.
+- Branch forks duplicate heads rows, not content (see §"Branches and forking").
+- Time travel to any prior state is just repointing heads to prior `blob_hash` values.
+- Durable backup: the blob store is append-only; point-in-time restore replays heads to a timestamp.
+
 ## The store — entity/component/relation
 
 Three Convex tables, schemaless payloads validated per-module by Zod.
@@ -73,6 +85,8 @@ export default defineSchema({
 ```
 
 Schemaless payloads + typed component_types means new modules add component types without migrations. Every payload is validated by a Zod schema the module ships with its manifest.
+
+**Payload storage.** Component and artifact-version payloads above 4 KB live as content-addressed blobs; the heads rows carry a `blob_hash` referencing canonicalized bytes (see `12_BLOB_STORAGE.md`). Small inline payloads (≤4 KB) can stay in the row via the `payload` field for hot-path reads; large ones (location JSON with long prose, theme JSON, image bytes) always resolve through the blob store. This is what enables cheap branching, deduplication, and rollback-as-pointer-update throughout the rest of this document.
 
 ## Path 1 — pure JSON location (the default)
 
@@ -271,6 +285,19 @@ At very large worlds (>1M locations), partition by macro-region via Convex Compo
 ### Prefetch neighbors
 
 Client subscribes to the 8-hex neighborhood of current location. Movement to any neighbor is instant (already in client cache). Prefetch triggers AI gen for next-most-likely neighbors in the background.
+
+## Branches and forking
+
+A **branch** is a named slice of the universe: a set of entity heads pointing at blobs, scoped by `branch_id`. Forking a branch duplicates heads rows with a new `branch_id`; the blob store is unchanged. A million-location world forks in milliseconds.
+
+Four user-facing features ride on this:
+
+- **Named branches** — "what if the chapel tower had never fallen" — long-lived parallel versions of the world.
+- **Dreams** — transient branches used for player what-ifs; state changes are discarded on completion.
+- **State-fork testing** — the crawler forks a seed branch per test run, explores, discards (see `06_TESTING.md`).
+- **Cross-branch character portability** — characters can be imported into another branch with durable state preserved.
+
+Full design in `13_FORKING_AND_BRANCHES.md`, including the `fork_branch` mutation, character-policy semantics (`same | fresh | select`), in-flight-flow handling (escape handlers fire at fork time to settle transient state cleanly), event-log policy (per-branch, not copied), and cleanup of transient/expired branches via a scheduled `transient_branch_gc` action.
 
 ## Version migration ladder
 

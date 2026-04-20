@@ -74,16 +74,29 @@ At depth 8 with average branching factor 3-4, ≈ 6,500 – 65,000 states per se
 
 Run time: ≈ 30-90 seconds per seed on a standard Convex test harness. Cost: effectively free (all-deterministic with AI cache; no live LLM calls because the cache covers every reachable AI response from the corpus).
 
-### Seeds
+### Seeds — state-fork branches
 
-Maintained in `packages/test/seeds/`. Each seed is a JSON state snapshot. Seeds added whenever a new game mechanic lands. Starter set:
+With the blob + branch architecture from `12_BLOB_STORAGE.md` and `13_FORKING_AND_BRANCHES.md`, seed states are **curated transient branches**, not JSON snapshots rehydrated in memory. Each seed is a named branch with a known fork point, committed to the test corpus alongside code. The crawler operates against live branches:
 
-- `fresh_spawn.json` — character just onboarded
-- `mid_exploration.json` — 20 locations visited, some NPCs met
-- `combat_imminent.json` — about to trigger combat
-- `post_combat.json` — combat just resolved
-- `deep_branch.json` — on a sub-branch with imported character
-- `inventory_full.json` — inventory at capacity
+```
+crawl(seed) →
+  branch = fork_branch(seed.branch_id, transient=true, expires_in=30min)
+  explore(branch, depth)
+  discard(branch)           // transient branches auto-GC'd
+```
+
+This is the primitive Lilith sketched in `13_FORKING_AND_BRANCHES.md` §"State-fork testing." Crawls never leak state, never re-pay blob generation (blobs are shared with the seed's world), and expose realistic runtime — the same mutation, action, and index paths production uses.
+
+Starter seed set (committed in `packages/test/seeds/` as metadata pointing at branch ids):
+
+- `fresh_spawn` — character just onboarded
+- `mid_exploration` — 20 locations visited, some NPCs met
+- `combat_imminent` — about to trigger combat
+- `post_combat` — combat just resolved
+- `deep_branch` — on a sub-branch with an imported character
+- `inventory_full` — inventory at capacity
+
+Seeds are added whenever a new game mechanic lands. Each seed's branch is recreated deterministically from a scripted setup sequence (a small `fixture.ts` file per seed) so CI can regenerate seed branches from a fresh DB when necessary — the committed branch ids are conveniences, not the source of truth.
 
 ### Fuzzed free-text set
 

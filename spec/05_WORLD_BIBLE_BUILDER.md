@@ -294,7 +294,7 @@ The builder is designed for **one device passed around**, not separate devices. 
 
 - Each step surfaces to whomever is holding the device.
 - Character creation is turn-based: each family member takes the device when it's their character's turn.
-- Voice input (Whisper WebGPU) is available so a 7-year-old can describe their character verbally while an adult types.
+- Voice input (Whisper WebGPU, on-device, see `15_VOICE_INPUT.md`) is available so a 7-year-old can describe their character verbally while an adult types. Voice is applicable to every text field in the builder, not just Step 4 — character descriptions, prose-sample field, biome descriptions, established facts, and taboos all accept voice.
 - Parents can override kids' inputs for rating/taboo concerns before commit; this goes into the mentorship log with reasoning.
 
 ## Saving, reopening, editing

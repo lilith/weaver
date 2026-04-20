@@ -8,7 +8,7 @@ This is the single feature that turns Weaver from a finite authored game into an
 
 ## Two triggers
 
-1. **Free-text input.** Player types anything instead of picking an option.
+1. **Free-text input.** Player types anything instead of picking an option. Free-text arrives either typed or as voice dictated via Whisper WebGPU (on-device, see `15_VOICE_INPUT.md`) — the classifier is agnostic to input method.
 2. **Unresolved option target.** Any option's `target` points to an id that doesn't exist yet (stub created; expansion fires on arrival).
 
 Both paths funnel through the same classifier → atom → handler pipeline.
@@ -325,11 +325,15 @@ The image-gen prompt safety suffix is applied uniformly: `Family-friendly, no go
 
 ## Rate limits & cost ceilings
 
-Per-world daily budget set by world owner. Default: $5/day. Tracked in a `cost_ledger` table.
+The expansion loop enforces two kinds of ceiling: a per-world daily cost cap (budget-driven) and a per-user per-minute free-text rate (abuse-driven).
 
-Per-user per-minute free-text rate: 10 inputs/min (prevents accidental cost explosions from kids mashing buttons).
+Specific numbers — per-world daily default, per-user per-minute rate, per-call cost estimates, graceful-degradation language — live in `14_COST_MODEL.md` alongside the rest of the cost model. This section documents the *mechanism*:
 
-When budget exhausted: classifier still runs (cheap), but `create_location` / `create_object` atoms route to a "the world is resting tonight" response until tomorrow. Existing content still fully playable.
+- The classifier always runs (cheap); it routes into handler dispatch regardless of budget state.
+- Handlers that incur material cost (`create_location`, `create_object`, image gen) check the `cost_ledger` budget for the world before proceeding.
+- Over-budget calls downgrade to a graceful fallback (generic stub location, biome fallback image) with an in-character "the world is resting tonight" message. Existing content stays fully playable.
+- The per-user per-minute rate is enforced in the classifier's Convex action via a rolling-window check on `cost_ledger` entries by user.
+- Users with `per_day_cost_cap_usd` set (e.g. minors per `16_PRIVACY_AND_MINORS.md`) hit their personal cap before the world cap — first one to zero wins.
 
 ## Testing the expansion loop
 
