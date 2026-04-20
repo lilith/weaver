@@ -149,3 +149,6 @@ test-results/
 # Backstory — copyrighted source material, never commit
 /backstory/
 
+# Research — upstream clones of third-party engines for reference only
+/research/
+

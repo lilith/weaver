@@ -368,3 +368,46 @@ Each chronicle clocks in at ~2-3 paragraphs and holds the grim-comedic tone. Cat
 All 23 locations, 7 biomes, 7 NPCs, 22 items, 5 characters, 1 bible = 65 artifact_version bumps in 3 sync rounds (one for initial push, one for bracket-subscript fix, one for item_id→slug rename). Current: all entities at v3 or v4.
 
 Flags observed firing: `flag.item_taxonomy` (inventory populates with kind metadata), `flag.biome_rules` (ambient says on traverse, fatigue damage at office-dungeon-outer), `flag.eras` (3 chronicles + catchup), `flag.world_clock` (hours_in_dungeon accumulator ticks), `flag.npc_memory` (seeds injected into any narrate calls). Flags that did NOT fire through option-picks but would have if wired: `flag.flows` (see gap #1).
+
+---
+
+## 2026-04-20 — technical pass: unblock Wave-2 content (code agent)
+
+**Worked on:** code path, both worlds. No content mutation.
+**Duration:** ~2 hours.
+**Scope:** 5 blocker fixes from the creative agents' gap list + `{{#if}}` expression support + bracket subscript + CLI `--as` ergonomics.
+
+### Shipped
+
+1. **`flow_start` dispatch wired** — `convex/flows.ts#startFlowFromEffect` internalAction scheduled from `convex/locations.ts` pending-loop. Every combat + dialogue option authored by both creative agents now actually opens a flow row. Verified live: goose-fight in Quiet Vale opened combat flow, survived 5 rounds of seeded-RNG attacks, closed with pending_says narrative intact; Ganesh dialogue flow in The Office produced an in-character drone-hum greeting.
+2. **`item_id` legacy fallback** — runtime accepts both `slug` and `item_id` on inventory effects. Zod schema canonicalised to `slug + qty? + payload?`. Validator emits a rename hint. 91 pre-existing Argus entries no longer silently drop loot.
+3. **Numeric comparison sane under undefined** — `compare()` returns false for nullish on either side; prefers `Number(x)` coercion with string-lex fallback. `this.growth >= 4` with undefined growth is now false instead of true-via-ASCII-lex (`'u' > '4'`). Time-of-day string comparisons preserved.
+4. **Expression tokenize in try/catch** — malformed expressions fail soft; `dumpLocation` no longer aborts on unparseable conditions.
+5. **`advanceEra` max_tokens 800 → 2000** — explicit `stop_reason === "max_tokens"` error guides authors to terser hints; parse errors include the truncated raw text.
+6. **`{{#if <expression>}}`** — template now accepts full expressions (ternary, &&, ||, comparisons, function calls, subscripts). Bare-path templates still work because a path is a valid expression.
+7. **Bracket subscript + postfix `.ident` chains** — parser adds `extendMemberChain` after every primary; tokenizer emits standalone `.` so `character.inventory["yellow-orb"].qty >= 3` tokenizes and parses cleanly. Greedy dotted-ident retained for backward compat (single-token `character.inventory.hp` still works).
+8. **CLI `--as <owner-email>` unblocks play ops** — `go / pick / weave / wait / clock / state / resolve / dismiss` now accept `--as` as an owner-bypass, and `cmdPick` resolves `world_id` from `whereAmI` when `cfg.world_id` is null in the ephemeral impersonate path.
+
+### Tests
+
+- `scripts/template-tests.mjs` — 19 cases across `#if` expressions, bracket subscript, postfix chains, numeric-compare undefined, malformed input, bare-path regressions. `pnpm dlx tsx scripts/template-tests.mjs`.
+- `scripts/gameplay-sweep.mjs` — extended with flow_start option-effect + legacy `item_id` regression blocks. 31 passed short, 38 with `--long`.
+- `svelte-check` 0 errors / 0 warnings.
+
+### Playtest loops
+
+- Quiet Vale: teleport → engage goose → 5-round combat → victory (hp 10 → 5). Then teleport to garden → plant bean-seed (consumed 1 of 3 charges) → water ×3 (growth 1 → 4) → harvest (+2 turnips, now 6 total, growth reset). Sonnet narrate on harvest produced in-voice prose ("pink-shouldered, crisp, cold").
+- The Office: teleport → fort-door → Talk to Ganesh → dialogue flow opened at `step=listen`, Ganesh humming in character.
+
+### Research input
+
+Background agent surveyed `rhai / rune / evalexpr / koto / steel` via lib.rs; clones at `/research/` (gitignored). Report at `research/SURVEY.md`. Independently recommended the exact postfix-chain + `.`-tokenization approach implemented here — a useful independent check.
+
+### Deferred (low priority, follow-up)
+
+- **Runtime_bugs logging** for expression parse errors. Currently soft-fail returns undefined silently. Research agent's rec #5. Nice-to-have diagnostic.
+- **Fuel / depth limit** on `parseTernary` / `extendMemberChain` (~6 lines). Research agent's rec #6. Not critical since all expression sources are owner-authored.
+- **`weaver memory show <slug>`** CLI. One of the Quiet Vale agent's asks.
+- **`give_random_item`** effect / `slug: { pick: [...] }`. Both agents asked; the fishing-pond 4-stage workaround holds.
+- **`spawn_combat { npc_slug }`** effect that resolves `combat_profile` from the NPC entity. Both agents asked; hardcoded `initial_state` works but is verbose.
+- **Migration pass** for the ~91 Argus `item_id` entries. Runtime now accepts either, but canonicalising the blobs would let the validator catch drift in future content.

@@ -604,8 +604,8 @@ function renderLook(d) {
 async function cmdGo([slug]) {
   needSession();
   if (!slug) err("usage: weaver go <loc_slug>", 2);
-  if (cfg.mode !== "author")
-    err("observer mode: go is author-only. weaver world use <your-slug>", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: go is author-only (or use --as <owner-email>)", 2);
   const client = getClient();
   const r = await client.mutation(ref("cli.teleportCharacter"), {
     session_token: cfg.session_token,
@@ -618,8 +618,8 @@ async function cmdGo([slug]) {
 async function cmdPick([arg]) {
   needSession();
   if (!arg) err("usage: weaver pick <index|label-substring>", 2);
-  if (cfg.mode !== "author")
-    err("observer mode: pick is author-only", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: pick is author-only (or use --as <owner-email>)", 2);
   const client = getClient();
   const world_slug = currentWorld();
   const info = await client.query(ref("cli.whereAmI"), {
@@ -645,9 +645,12 @@ async function cmdPick([arg]) {
     if (!match) err(`no visible option matches: ${arg}`, 1);
     optionIndex = match.index;
   }
+  // Prefer the freshly-resolved world.id from whereAmI so --as --world
+  // flows work (cfg.world_id is null in the ephemeral-impersonate path).
+  const world_id = info.world?.id ?? cfg.world_id;
   const r = await client.mutation(ref("locations.applyOption"), {
     session_token: cfg.session_token,
-    world_id: cfg.world_id,
+    world_id,
     location_slug: loc_slug,
     option_index: optionIndex,
   });
@@ -655,7 +658,7 @@ async function cmdPick([arg]) {
   if (r.needs_expansion) {
     const ex = await client.action(ref("expansion.expandFromFreeText"), {
       session_token: cfg.session_token,
-      world_id: cfg.world_id,
+      world_id,
       location_slug: loc_slug,
       input: r.needs_expansion.hint,
     });
@@ -672,8 +675,8 @@ async function cmdPick([arg]) {
 async function cmdWeave([text]) {
   needSession();
   if (!text) err('usage: weaver weave "free text"', 2);
-  if (cfg.mode !== "author")
-    err("observer mode: weave is author-only", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: weave is author-only (or use --as <owner-email>)", 2);
   const client = getClient();
   const world_slug = currentWorld();
   const info = await client.query(ref("cli.whereAmI"), {
@@ -697,7 +700,8 @@ async function cmdWeave([text]) {
 
 async function cmdWait() {
   needSession();
-  if (cfg.mode !== "author") err("observer mode: wait is author-only", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: wait is author-only (or use --as <owner-email>)", 2);
   // Advance the clock by one tick's worth of minutes without triggering
   // an option. Preferred path: a real "wait" option in the location if
   // one exists (UX-03); fallback: fastForwardClock by tick_minutes.
@@ -734,7 +738,8 @@ async function cmdClock([sub, ...a]) {
       t ? `${t.day_of_week} ${t.hhmm}  day ${t.day_counter}  week ${t.week_counter}  tick=${t.tick_minutes}m` : "(no clock)",
     );
   }
-  if (cfg.mode !== "author") err("observer mode: clock mutation is author-only", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: clock mutation is author-only (or use --as <owner-email>)", 2);
   if (sub.startsWith("+")) {
     const delta_minutes = parseDuration(sub.slice(1));
     const r = await client.mutation(ref("cli.fastForwardClock"), {
@@ -783,7 +788,8 @@ async function cmdState([sub, ...a]) {
     });
     return out(info.character?.state ?? {}, (s) => JSON.stringify(s, null, 2));
   }
-  if (cfg.mode !== "author") err("observer mode: state mutation is author-only", 2);
+  if (cfg.mode !== "author" && !flags.as)
+    err("observer mode: state mutation is author-only (or use --as <owner-email>)", 2);
   if (sub === "set") {
     const [path, ...valParts] = a;
     if (!path || valParts.length === 0)
@@ -855,7 +861,8 @@ async function cmdJourney([sub, ...a]) {
     return out(j);
   }
   if (sub === "resolve") {
-    if (cfg.mode !== "author") err("observer mode: resolve is author-only", 2);
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: resolve is author-only (or use --as <owner-email>)", 2);
     const [id, slugs] = a;
     if (!id || !slugs)
       err("usage: weaver journey resolve <id> slug1,slug2,...", 2);
@@ -871,7 +878,8 @@ async function cmdJourney([sub, ...a]) {
     return out(r, (o) => `saved=${o.saved}  skipped=${o.skipped}`);
   }
   if (sub === "dismiss") {
-    if (cfg.mode !== "author") err("observer mode: dismiss is author-only", 2);
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: dismiss is author-only (or use --as <owner-email>)", 2);
     const [id] = a;
     if (!id) err("usage: weaver journey dismiss <id>", 2);
     const r = await client.mutation(ref("journeys.dismissJourney"), {

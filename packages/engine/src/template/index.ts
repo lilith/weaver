@@ -1,8 +1,14 @@
 // Weaver template engine — a minimal mustache-ish renderer for location
-// descriptions. Supports {{var.path}}, {{#if cond}}...{{/if}},
-// {{#unless cond}}...{{/unless}}. No {{#each}} yet — add on demand.
+// descriptions. Supports {{var.path}}, {{#if expr}}...{{/if}},
+// {{#unless expr}}...{{/unless}}. No {{#each}} yet — add on demand.
 // Grammar parsed to AST once, evaluated against scoped context.
+// #if/#unless take a full expression (ternary, &&, ||, comparisons,
+// function calls, bracket subscript) via evalExpression from
+// @weaver/engine/clock; bare-path templates still work since a path is
+// a valid expression.
 // Never uses eval or dynamic property access beyond pathlookup.
+
+import { evalExpression } from "../clock/index.js";
 
 type Scope = Record<string, unknown>;
 
@@ -16,7 +22,7 @@ export interface TemplateContext {
 type Node =
   | { kind: "text"; text: string }
   | { kind: "var"; path: string }
-  | { kind: "if"; path: string; negate: boolean; body: Node[] };
+  | { kind: "if"; expr: string; negate: boolean; body: Node[] };
 
 /** Parse template source to AST. */
 export function parseTemplate(source: string): Node[] {
@@ -51,10 +57,10 @@ function parseInto(
 
       if (inner.startsWith("#if ") || inner.startsWith("#unless ")) {
         const negate = inner.startsWith("#unless ");
-        const path = inner.slice(negate ? 8 : 4).trim();
+        const expr = inner.slice(negate ? 8 : 4).trim();
         const body: Node[] = [];
         i = parseInto(src, i, end, body, negate ? "/unless" : "/if");
-        out.push({ kind: "if", path, negate, body });
+        out.push({ kind: "if", expr, negate, body });
       } else if (inner.startsWith("/")) {
         throw new Error(`unexpected closing tag: ${inner}`);
       } else {
@@ -81,7 +87,8 @@ function renderNodes(nodes: Node[], ctx: TemplateContext): string {
     if (n.kind === "text") out += n.text;
     else if (n.kind === "var") out += stringify(lookup(ctx, n.path));
     else if (n.kind === "if") {
-      const truthy = isTruthy(lookup(ctx, n.path));
+      const v = evalExpression(n.expr, ctx as unknown as Scope);
+      const truthy = isTruthy(v);
       if (truthy !== n.negate) out += renderNodes(n.body, ctx);
     }
   }
@@ -111,7 +118,10 @@ function isTruthy(v: unknown): boolean {
   return true;
 }
 
-/** Collect every {{var.path}} that appears in the source. */
+/** Collect every {{var.path}} that appears in the source. Returns
+ *  bare-path strings for `var` nodes and raw expression strings for
+ *  `#if`/`#unless` guards. Callers that need per-path resolution should
+ *  prefer `traceReferencedPaths` from clock on the expression string. */
 export function extractVarPaths(src: string): string[] {
   const paths = new Set<string>();
   walk(parseTemplate(src));
@@ -120,7 +130,7 @@ export function extractVarPaths(src: string): string[] {
     for (const n of nodes) {
       if (n.kind === "var") paths.add(n.path);
       else if (n.kind === "if") {
-        paths.add(n.path);
+        paths.add(n.expr);
         walk(n.body);
       }
     }

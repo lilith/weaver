@@ -209,7 +209,7 @@ export function evalExpression(
 			consume("(");
 			const v = parseTernary();
 			consume(")");
-			return v;
+			return extendMemberChain(v);
 		}
 		if (t.kind === "string" || t.kind === "number") {
 			consume();
@@ -221,24 +221,37 @@ export function evalExpression(
 			if (t.value === "false") return false;
 			if (t.value === "null") return null;
 			if (t.value === "undefined") return undefined;
-			// Function call?
 			if (peek()?.kind === "(") {
-				return callFunction(t.value);
+				return extendMemberChain(callFunction(t.value));
 			}
-			// Bracket-subscript chain: `x[key]...[key]` for hyphenated
-			// keys that can't be dot-paths. Mix with further dots via
-			// the existing lookupPath on the initial ident.
-			let cur: unknown = lookupPath(scope, t.value);
-			while (peek()?.kind === "[") {
+			return extendMemberChain(lookupPath(scope, t.value));
+		}
+		throw new Error(`unexpected token ${t.kind}`);
+	}
+	// Chain `[expr]` and `.ident` postfix access on a primary value.
+	// Safe on nullish cur — further lookups stay undefined but the
+	// token stream is still fully consumed so the outer parser doesn't
+	// choke on the tail. Dotted idents like `.a.b.c` are passed through
+	// lookupPath so we handle the lexer's greedy dotted-ident shape.
+	function extendMemberChain(cur: unknown): unknown {
+		while (true) {
+			const p = peek();
+			if (p?.kind === "[") {
 				consume("[");
 				const key = parseTernary();
 				consume("]");
-				if (cur == null) return undefined;
-				cur = (cur as Record<string, unknown>)[String(key)];
+				cur = cur == null ? undefined : (cur as any)[String(key)];
+			} else if (p?.kind === ".") {
+				consume(".");
+				const next = peek();
+				if (next?.kind !== "ident") throw new Error(`expected ident after .`);
+				consume();
+				cur = cur == null ? undefined : lookupPath(cur as any, next.value);
+			} else {
+				break;
 			}
-			return cur;
 		}
-		throw new Error(`unexpected token ${t.kind}`);
+		return cur;
 	}
 	function parseArgs(): unknown[] {
 		consume("(");
@@ -441,6 +454,7 @@ type Token =
 	| { kind: ")" }
 	| { kind: "[" }
 	| { kind: "]" }
+	| { kind: "." }
 	| { kind: "," }
 	| { kind: "?" }
 	| { kind: ":" }
@@ -514,6 +528,16 @@ function tokenize(src: string): Token[] {
 		}
 		if (c === "!") {
 			out.push({ kind: "!" });
+			i++;
+			continue;
+		}
+		// Standalone `.` — emitted only in the post-primary positions
+		// where neither number nor ident regex already ate it (e.g.
+		// `x[key].y` after the closing bracket, or `(expr).y`). Dotted
+		// paths like `foo.bar.baz` still tokenize as one ident via the
+		// ident continue-set below.
+		if (c === ".") {
+			out.push({ kind: "." });
 			i++;
 			continue;
 		}
