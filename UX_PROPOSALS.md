@@ -78,6 +78,35 @@ Leaning **b** — UI-global action avoids boilerplate per-location.
 
 ---
 
+### UX-05 · New biomes land with no palette
+
+**Problem.** The expansion prompt now asks Opus to prefer the world's
+authored biome slugs but allows inventing new ones when needed. Any
+invented biome slug has no entry in `packages/engine/biomes/
+palettes.json` — the location page falls through to the base
+midnight-loom palette. The world's own authored biomes in
+`the-office` (office-dungeon-outer, apartment, coffee-shop,
+parlour-street-diner, …) also lack palette entries because
+`gen-biome-themes.mjs` was a one-shot 9-biome generation, not aware of
+later imports.
+
+*How it showed up.* Imported The Office with 7 custom biomes; none
+have a palette. Every location inside looks the same color-wise.
+
+*If forced.* Auto-generate palettes during import — for each biome
+slug in the bundle, if no palette exists, call Opus once with the
+biome's name + `establishing_shot_prompt` + world style anchor, add
+to the registry, persist. Costs ~$0.05 per 10 biomes (amortized).
+
+*Decision surface.* (a) auto-gen per-import — cost + one extra LLM
+call in the import path; (b) batch-gen on demand — a "regenerate
+palettes" button somewhere; (c) stay hand-curated forever — every
+world gets the same palette unless someone runs the script.
+
+Leaning **a**, embedded in the importer. Cost is negligible.
+
+---
+
 ### UX-04 · World clock not visible on the journal page
 
 **Problem.** Journal shows journeys with their `opened_at` as a

@@ -54,7 +54,17 @@ export const expandFromFreeText = action({
       location_slug,
     });
 
-    const systemPrompt = buildSystemPrompt(ctxData.bible);
+    // Build the shared narrative-prompt shell (world bible + biome +
+    // style anchor, all cacheable). The expansion-specific tail — the
+    // LocationSchema schema + parent location + free-text input — lives
+    // in the extension we append below.
+    const assembled = await ctx.runQuery(internal.narrative.buildPrompt, {
+      world_id,
+      purpose: "expansion",
+      location_entity_id: ctxData.parentEntityId,
+    });
+
+    const expansionInstructions = buildExpansionInstructions();
     const userPrompt = buildUserPrompt(ctxData.parent, trimmed, ctxData.characterName);
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -63,11 +73,8 @@ export const expandFromFreeText = action({
       max_tokens: MAX_TOKENS,
       temperature: 1.0,
       system: [
-        {
-          type: "text",
-          text: systemPrompt,
-          cache_control: { type: "ephemeral" },
-        },
+        ...assembled.system,
+        { type: "text", text: expansionInstructions },
       ],
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -275,20 +282,15 @@ export const insertExpandedLocation = internalMutation({
 // -----------------------------------------------------------------------
 // Prompts + parsing
 
-function buildSystemPrompt(bible: Record<string, unknown> | null): string {
-  const bibleText = bible
-    ? JSON.stringify(bible, null, 2)
-    : "(no world bible found — improvise a gentle cozy default)";
-  return `You are Weaver — a collaborative world-building game engine.
-
-A player just typed a free-text action. Respond with a new location for them to travel to, OR a narration if their input has no spatial meaning. **When in doubt, prefer location** — the player wants to go somewhere new.
+function buildExpansionInstructions(): string {
+  return `A player just typed a free-text action. Respond with a new location (spatial action) OR a narration (non-spatial). When in doubt, prefer location — the player wants to go somewhere new.
 
 Return strict JSON. No commentary, no markdown fences. Top-level shape is one of:
 
 {"kind":"location","location":{
   "slug":"kebab-case-unique",
   "name":"A short name",
-  "biome":"<MUST be one of the biome slugs listed below — pick the closest mood>",
+  "biome":"<MUST be one of the biome slugs below — pick the closest mood>",
   "description_template":"<one or two paragraphs of prose, no template vars unless they're declared in state_keys>",
   "options":[
     {"label":"A choice","target":"<slug of some known location OR a new slug that you'd generate next visit>"},
@@ -303,16 +305,7 @@ OR for purely non-spatial actions (sighing, remembering, feeling):
 
 {"kind":"narrate","text":"<1-3 sentences of flavor text>"}
 
-KNOWN BIOME SLUGS (pick exactly one):
-- village — cozy stone cottages, woodsmoke, morning light
-- forest — mossy old growth, cathedrals of green
-- inn — firelight, fresh bread, latched doors
-- urban-fantasy — rain-slicked neon streets, old magic bleeding through
-- skyrise — glass towers, lamp-gold city far below
-- city — sodium streetlights, wet asphalt, distant sirens
-- warehouse — pale fluorescents, concrete, metal racks
-- dungeon — damp stone, torchlight, dripping dark
-- endless-abyss — bruise-purple void, cold light from nowhere
+BIOME SLUG RULE: pick exactly one biome slug. Prefer any slug listed in the world bible's \`biomes[]\` array; that keeps the visual palette coherent. Only invent a new biome slug if the world's set genuinely doesn't cover the requested place — and if you do, keep it kebab-case.
 
 HARD RULES:
 - Include at least one option whose target is the parent location's slug (the way home).
@@ -320,10 +313,7 @@ HARD RULES:
 - "slug" must be kebab-case-ascii-only, unique-ish.
 - 2–5 options per location.
 - Description: 1–2 short paragraphs, mobile-readable.
-- Climb / descend / open / step through / walk to / enter — all strongly imply "location", not "narrate".
-
-WORLD BIBLE:
-${bibleText}`;
+- Climb / descend / open / step through / walk to / enter — all strongly imply "location", not "narrate".`;
 }
 
 function buildUserPrompt(
