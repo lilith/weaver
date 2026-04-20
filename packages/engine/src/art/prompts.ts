@@ -101,6 +101,21 @@ export const MODE_PROMPTS: Record<string, (ctx: ArtPromptCtx) => string> = {
   ambient_palette: (ctx) => {
     return `Palette extraction from ${ctx.entity.slug ?? "entity"} (no gen)`;
   },
+
+  // Pixel-art map tile — top-down, square, NES/SNES-era aesthetic.
+  // Fed into /map/[world] via the map_tile rendering. Limited
+  // palette + clean edges so the tile reads at 96-128px.
+  map_tile: (ctx) => {
+    const parts = [
+      "Top-down map tile, square composition, pixel-art",
+      "16-bit / SNES aesthetic, limited palette (8-12 colors), clean pixel edges, dithering for shadows",
+      descFor(ctx, true),
+      styleFragment(ctx),
+      "no text, no borders, edge-to-edge fill",
+    ];
+    if (ctx.feedback_context) parts.push(`notes: ${ctx.feedback_context}`);
+    return parts.filter(Boolean).join(". ");
+  },
 };
 
 export const MODE_SIZES: Record<string, string> = {
@@ -110,6 +125,7 @@ export const MODE_SIZES: Record<string, string> = {
   illumination: "square_hd",
   hero_full: "landscape_16_9",
   ambient_palette: "square_hd",
+  map_tile: "square_hd",
 };
 
 export const ALL_MODES = Object.keys(MODE_PROMPTS);

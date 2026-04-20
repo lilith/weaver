@@ -28,6 +28,7 @@ import type * as flows from "../flows.js";
 import type * as import_ from "../import.js";
 import type * as journeys from "../journeys.js";
 import type * as locations from "../locations.js";
+import type * as map from "../map.js";
 import type * as mentorship from "../mentorship.js";
 import type * as modules_combat from "../modules/combat.js";
 import type * as modules_counter from "../modules/counter.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   import: typeof import_;
   journeys: typeof journeys;
   locations: typeof locations;
+  map: typeof map;
   mentorship: typeof mentorship;
   "modules/combat": typeof modules_combat;
   "modules/counter": typeof modules_counter;

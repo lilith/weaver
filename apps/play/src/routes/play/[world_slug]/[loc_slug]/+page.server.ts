@@ -145,6 +145,7 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 			? { slug: palette.slug, name: palette.name, mood: palette.mood, css: paletteCss }
 			: null,
 		theme_css: themeCss,
+		world_slug: params.world_slug,
 		closed_journey,
 		character_state: (character.state as Record<string, unknown>) ?? {},
 		// Art-curation integration surface. Client uses the reactive

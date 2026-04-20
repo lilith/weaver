@@ -82,6 +82,11 @@
 					{data.location.world_time.hhmm}
 				</span>
 			{/if}
+			<a
+				href={`/map/${data.world_slug}`}
+				class="font-hand text-base text-candle-300 underline decoration-candle-600/50 hover:text-candle-200"
+				title="see the world as a map"
+			>· map</a>
 			{#if data.era_catchup}
 				<span
 					class="font-hand text-base text-candle-300"
