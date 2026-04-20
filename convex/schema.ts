@@ -87,6 +87,11 @@ export default defineSchema({
     // Preferred art mode when this character views a location.
     // Falls through to top-voted existing mode → `ambient_palette`.
     art_mode_preferred: v.optional(v.string()),
+    // Eras v2 — era the character has acknowledged. When worlds.
+    // active_era > personal_era, the player sees a catch-up chronicle
+    // panel on their next applyOption; acknowledging advances this
+    // to match the world. Defaults to 1 when absent.
+    personal_era: v.optional(v.number()),
     created_at: v.number(),
     updated_at: v.number(),
   })

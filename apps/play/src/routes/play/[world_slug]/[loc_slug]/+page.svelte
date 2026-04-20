@@ -74,6 +74,15 @@
 					{data.location.world_time.hhmm}
 				</span>
 			{/if}
+			{#if data.era_catchup}
+				<span
+					class="font-hand text-base text-candle-300"
+					title="one or more chronicles await at the top of the page"
+				>
+					· era {data.era_catchup.personal_era} →
+					{data.era_catchup.active_era}
+				</span>
+			{/if}
 		</div>
 	</header>
 
@@ -128,6 +137,41 @@
 	{#if form?.error}
 		<section class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
 			{form.error}
+		</section>
+	{/if}
+
+	<!-- Era catch-up: one or more chronicles have been written since
+		 this character last played. Shown inline; ack button advances
+		 personal_era to match the world and dismisses the panel. -->
+	{#if data.era_catchup && data.era_catchup.chronicles.length > 0}
+		<section class="story-card space-y-4 px-5 py-5 border-candle-400/50">
+			<div class="space-y-1">
+				<p class="font-hand text-2xl text-candle-300">
+					while you were gone…
+				</p>
+				<p class="text-sm text-mist-400">
+					{data.era_catchup.chronicles.length === 1
+						? 'a chapter break'
+						: `${data.era_catchup.chronicles.length} chapter breaks`}
+					· era {data.era_catchup.personal_era} → era {data.era_catchup.active_era}
+				</p>
+			</div>
+			{#each data.era_catchup.chronicles as c (c.id)}
+				<article class="space-y-1 border-l-2 border-candle-400/40 pl-3">
+					<h3 class="font-display text-lg text-mist-100">{c.title}</h3>
+					<p class="font-mono text-xs text-mist-500">
+						era {c.from_era} → {c.to_era}
+					</p>
+					<div class="story-prose whitespace-pre-wrap text-sm leading-relaxed">
+						{c.body}
+					</div>
+				</article>
+			{/each}
+			<form method="POST" action="?/ack_era" use:enhance>
+				<button type="submit" class="storybook-button">
+					✧ step into era {data.era_catchup.active_era}
+				</button>
+			</form>
 		</section>
 	{/if}
 

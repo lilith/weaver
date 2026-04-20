@@ -298,6 +298,8 @@ async function dispatch() {
       return cmdBugs(rest);
     case "biome":
       return cmdBiome(rest);
+    case "era":
+      return cmdEra(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -1964,6 +1966,74 @@ async function cmdBiome([sub, ...a]) {
     );
   }
   err("usage: weaver biome [auto-palette <slug>|auto-palette-all]", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: era (advance + list chronicles + catch-up)
+
+async function cmdEra([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "list") {
+    const data = await client.query(ref("worlds.listChronicles"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    if (!data) err("world not found", 3);
+    return out(
+      data,
+      (o) =>
+        `active era: ${o.active_era}\n` +
+        (o.chronicles.length === 0
+          ? "  (no chronicles yet)"
+          : o.chronicles
+              .map(
+                (c) =>
+                  `  era ${c.from_era} → ${c.to_era}: ${c.title}\n    ${c.body.slice(0, 140).replace(/\n/g, " ")}${c.body.length > 140 ? "…" : ""}`,
+              )
+              .join("\n")),
+    );
+  }
+  if (sub === "advance") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: era advance is owner-only", 2);
+    const hint = a.filter((x) => x !== "--hint").join(" ").trim() || undefined;
+    const r = await client.action(ref("worlds.advanceEra"), {
+      session_token: cfg.session_token,
+      world_slug,
+      hint,
+    });
+    return out(
+      r,
+      (o) => `advanced era ${o.from_era} → ${o.to_era} (chronicle ${o.chronicle_id})`,
+    );
+  }
+  if (sub === "ack") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: ack is for your own character only", 2);
+    const r = await client.mutation(ref("worlds.acknowledgeEraCatchup"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    return out(r, (o) => `personal_era now ${o.personal_era}`);
+  }
+  if (sub === "catchup") {
+    const r = await client.query(ref("worlds.pendingEraCatchup"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    if (!r) return out(null, () => "(caught up; nothing pending)");
+    return out(
+      r,
+      (o) =>
+        `pending: era ${o.personal_era} → ${o.active_era} (${o.chronicles.length} chronicles)\n` +
+        o.chronicles
+          .map((c) => `  era ${c.from_era} → ${c.to_era}: ${c.title}`)
+          .join("\n"),
+    );
+  }
+  err("usage: weaver era [list|advance [hint...]|ack|catchup]", 2);
 }
 
 // ---------------------------------------------------------------

@@ -77,6 +77,19 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		artCurationEnabled = false;
 	}
 
+	// Era catch-up: if world.active_era has advanced past this
+	// character's personal_era, surface the unseen chronicles so the
+	// play page can render a catch-up panel. Null when caught up.
+	let era_catchup = null;
+	try {
+		era_catchup = await client.query(api.worlds.pendingEraCatchup, {
+			session_token: locals.session_token,
+			world_slug: params.world_slug,
+		});
+	} catch {
+		/* fail safe — no panel */
+	}
+
 	return {
 		location: {
 			entity_id: location.entity_id,
@@ -112,7 +125,8 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 			world_slug: params.world_slug,
 			entity_id: location.entity_id,
 			session_token: locals.session_token
-		}
+		},
+		era_catchup
 	};
 };
 
@@ -250,6 +264,20 @@ export const actions: Actions = {
 			return fail(500, { error: (e as Error).message });
 		}
 		return { saved: true };
+	},
+
+	ack_era: async ({ params, locals }) => {
+		if (!locals.session_token) return fail(401, { error: "not signed in" });
+		const client = convexServer();
+		try {
+			await client.mutation(api.worlds.acknowledgeEraCatchup, {
+				session_token: locals.session_token,
+				world_slug: params.world_slug
+			});
+			return { era_acknowledged: true };
+		} catch (e) {
+			return fail(500, { error: (e as Error).message });
+		}
 	},
 
 	expand: async ({ request, params, locals }) => {

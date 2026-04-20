@@ -600,7 +600,6 @@ export const suggestBibleEdit = action({
     const response = await anthropic.messages.create({
       model: BIBLE_FEEDBACK_MODEL,
       max_tokens: 3000,
-      temperature: 0.7,
       system: [{ type: "text", text: BIBLE_EDIT_SYSTEM_PROMPT }],
       messages: [
         {
@@ -777,7 +776,6 @@ export const advanceEra = action({
     const response = await anthropic.messages.create({
       model: CHRONICLE_MODEL,
       max_tokens: 800,
-      temperature: 0.9,
       system: [{ type: "text", text: CHRONICLE_SYSTEM_PROMPT }],
       messages: [
         {
@@ -880,6 +878,78 @@ export const writeEraTransition = internalMutation({
     });
     await ctx.db.patch(world._id, { active_era: to_era });
     return chronicle_id;
+  },
+});
+
+/** If the caller's character is behind the world's active_era, return
+ *  the chronicles they haven't seen + the target era. Otherwise null.
+ *  Used by the play-page loader to surface a catch-up panel. */
+export const pendingEraCatchup = query({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    const { user_id } = await resolveMember(ctx, session_token, world._id);
+    const character = await ctx.db
+      .query("characters")
+      .withIndex("by_world_user", (q) =>
+        q.eq("world_id", world._id).eq("user_id", user_id),
+      )
+      .first();
+    if (!character) return null;
+    const active = world.active_era ?? 1;
+    const personal = (character as any).personal_era ?? 1;
+    if (personal >= active) return null;
+    const rows = await ctx.db
+      .query("chronicles")
+      .withIndex("by_world_era", (q) => q.eq("world_id", world._id))
+      .collect();
+    const unseen = rows
+      .filter((r: any) => r.to_era > personal && r.to_era <= active)
+      .sort((a: any, b: any) => a.to_era - b.to_era);
+    if (unseen.length === 0) return null;
+    return {
+      character_id: character._id,
+      personal_era: personal,
+      active_era: active,
+      chronicles: unseen.map((r: any) => ({
+        id: r._id,
+        from_era: r.from_era,
+        to_era: r.to_era,
+        title: r.title,
+        body: r.body,
+      })),
+    };
+  },
+});
+
+/** Acknowledge chronicles — advance the caller's personal_era to match
+ *  the world's active_era. Idempotent. */
+export const acknowledgeEraCatchup = mutation({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world not found: ${world_slug}`);
+    const { user_id } = await resolveMember(ctx, session_token, world._id);
+    const character = await ctx.db
+      .query("characters")
+      .withIndex("by_world_user", (q) =>
+        q.eq("world_id", world._id).eq("user_id", user_id),
+      )
+      .first();
+    if (!character) throw new Error("no character");
+    const active = world.active_era ?? 1;
+    await ctx.db.patch(character._id, {
+      personal_era: active,
+      updated_at: Date.now(),
+    });
+    return { personal_era: active };
   },
 });
 

@@ -43,6 +43,11 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 const FLUX_MODEL = "fal-ai/flux/schnell";
+// When at least one matching reference board entry exists, switch to
+// flux-pro/kontext which accepts an image_url for reference-guided
+// generation. Single-image reference is the sweet spot: strong style
+// transfer with ~10s latency vs schnell's ~3s.
+const FLUX_REF_MODEL = "fal-ai/flux-pro/kontext";
 
 // --------------------------------------------------------------------
 // Queries
@@ -262,20 +267,43 @@ export const runGenVariant = internalAction({
       const size = MODE_SIZES[info.mode] ?? "square_hd";
 
       fal.config({ credentials: process.env.FAL_KEY });
-      // Reference-board images: top-3 most-upvoted renderings matching
-      // this entity's kinds. FLUX.schnell doesn't take ref images; pro
-      // does. Schnell stays single-image for now — the consistency cost
-      // is real; upgrade to pro a follow-up commit.
-      const result: any = await fal.subscribe(FLUX_MODEL, {
-        input: {
-          prompt,
-          image_size: size as any, // MODE_SIZES returns a subset of fal's ImageSize union
-          num_inference_steps: 4,
-          num_images: 1,
-          enable_safety_checker: true,
-        },
-        logs: false,
-      });
+      const refHash = (info as any).ref_blob_hash as string | null;
+      const refKind = (info as any).ref_kind_used as string | null;
+      const r2Public = process.env.R2_IMAGES_PUBLIC_URL;
+      // Reference-guided gen: if the reference board has a relevant
+      // pinned blob AND we have a public R2 URL for it, call
+      // flux-pro/kontext with that image_url. Else fall back to schnell.
+      let result: any;
+      let modelUsed = FLUX_MODEL;
+      let promptNote = "";
+      if (refHash && r2Public) {
+        const refUrl = `${r2Public}/blob/${refHash.slice(0, 2)}/${refHash.slice(2, 4)}/${refHash}`;
+        modelUsed = FLUX_REF_MODEL;
+        promptNote = ` [ref: ${refKind}]`;
+        result = await fal.subscribe(FLUX_REF_MODEL, {
+          input: {
+            prompt,
+            image_url: refUrl,
+            // kontext tuning — these are typical defaults; fal ignores
+            // unknown keys.
+            num_images: 1,
+            safety_tolerance: "2",
+            guidance_scale: 3.5,
+          } as any,
+          logs: false,
+        });
+      } else {
+        result = await fal.subscribe(FLUX_MODEL, {
+          input: {
+            prompt,
+            image_size: size as any,
+            num_inference_steps: 4,
+            num_images: 1,
+            enable_safety_checker: true,
+          },
+          logs: false,
+        });
+      }
       const imageUrl: string | undefined = result?.data?.images?.[0]?.url;
       if (!imageUrl) throw new Error("fal returned no image url");
 
@@ -303,7 +331,7 @@ export const runGenVariant = internalAction({
       await ctx.runMutation(internal.art_curation.markRenderingReady, {
         rendering_id,
         blob_hash: hash,
-        prompt_used: prompt,
+        prompt_used: `${modelUsed}${promptNote} · ${prompt}`,
       });
     } catch (e: any) {
       await ctx.runMutation(internal.art_curation.markRenderingFailed, {
@@ -353,6 +381,47 @@ export const loadRenderingCtx = internalQuery({
         .first();
       if (bv) bible = await readJSONBlob<any>(ctx as any, bv.blob_hash);
     }
+    // Reference-board lookup — pick the most-recent (highest order)
+    // entry for whichever kind best matches this entity + mode. Priority:
+    //   character:<slug> / npc:<slug> / item:<slug>   (entity-specific)
+    //   biome:<biome>                                  (scene continuity)
+    //   mode:<mode>                                    (treatment style)
+    //   style                                          (world aesthetic)
+    // Only the top-1 is used because flux-pro/kontext takes a single
+    // image_url and multi-ref lands in a future pass.
+    const candidateKinds: string[] = [];
+    if (entity.type === "character" || entity.type === "npc" || entity.type === "item") {
+      candidateKinds.push(`${entity.type}:${entity.slug}`);
+    }
+    if (payload?.biome && entity.type === "location") {
+      candidateKinds.push(`biome:${payload.biome}`);
+    }
+    candidateKinds.push(`mode:${rendering.mode}`);
+    candidateKinds.push("style");
+
+    let refBlobHash: string | null = null;
+    let refKindUsed: string | null = null;
+    for (const k of candidateKinds) {
+      const rows = await ctx.db
+        .query("art_reference_board")
+        .withIndex("by_world_kind", (q: any) =>
+          q.eq("world_id", rendering.world_id).eq("kind", k),
+        )
+        .collect();
+      if (rows.length === 0) continue;
+      // Highest order = most-recently-pinned canonical. Walk the pins
+      // newest-first, skipping any whose rendering isn't ready-with-blob.
+      rows.sort((a: any, b: any) => b.order - a.order);
+      for (const r of rows) {
+        const rend = (await ctx.db.get(r.rendering_id)) as any;
+        if (!rend || rend.status !== "ready" || !rend.blob_hash) continue;
+        refBlobHash = rend.blob_hash;
+        refKindUsed = k;
+        break;
+      }
+      if (refBlobHash) break;
+    }
+
     return {
       mode: rendering.mode,
       prompt_ctx: {
@@ -367,6 +436,8 @@ export const loadRenderingCtx = internalQuery({
         },
         world_style_anchor: bible?.style_anchor,
       },
+      ref_blob_hash: refBlobHash,
+      ref_kind_used: refKindUsed,
     };
   },
 });
