@@ -34,6 +34,87 @@ export const devSignInAs = action({
   },
 });
 
+/**
+ * One-shot: ensure a user row for each given email, and grant each of them
+ * membership to every world owned by the primary_email user (with the
+ * specified role). Safe to re-run — skips existing users and existing
+ * memberships. Runs forward only (won't retro-demote or remove).
+ */
+export const preauthorizeHousehold = internalMutation({
+  args: {
+    primary_email: v.string(),
+    member_emails: v.array(v.string()),
+    role: v.union(
+      v.literal("player"),
+      v.literal("family_mod"),
+      v.literal("owner"),
+    ),
+    is_minor: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { primary_email, member_emails, role, is_minor }) => {
+    const primary = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", primary_email.trim().toLowerCase()))
+      .first();
+    if (!primary) throw new Error(`primary user ${primary_email} not found`);
+
+    const worlds = await ctx.db
+      .query("worlds")
+      .withIndex("by_owner", (q) => q.eq("owner_user_id", primary._id))
+      .collect();
+
+    const now = Date.now();
+    const summary: Record<string, { user_created: boolean; worlds_added: number; worlds_skipped: number }> = {};
+
+    for (const raw of member_emails) {
+      const email = raw.trim().toLowerCase();
+      let user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .first();
+      let user_created = false;
+      if (!user) {
+        const userId = await ctx.db.insert("users", {
+          email,
+          display_name: email.split("@")[0],
+          is_minor: is_minor === true,
+          guardian_user_ids: is_minor === true ? [primary._id] : [],
+          created_at: now,
+        });
+        user = (await ctx.db.get(userId))!;
+        user_created = true;
+      }
+
+      let added = 0;
+      let skipped = 0;
+      for (const w of worlds) {
+        const existing = await ctx.db
+          .query("world_memberships")
+          .withIndex("by_world_user", (q) =>
+            q.eq("world_id", w._id).eq("user_id", user!._id),
+          )
+          .first();
+        if (existing) {
+          skipped++;
+          continue;
+        }
+        await ctx.db.insert("world_memberships", {
+          world_id: w._id,
+          user_id: user._id,
+          role,
+          created_at: now,
+        });
+        added++;
+      }
+      summary[email] = { user_created, worlds_added: added, worlds_skipped: skipped };
+    }
+    return {
+      primary_worlds: worlds.length,
+      members: summary,
+    };
+  },
+});
+
 export const ensureSessionForEmail = internalMutation({
   args: { email: v.string(), session_token_hash: v.string() },
   handler: async (ctx, { email, session_token_hash }) => {

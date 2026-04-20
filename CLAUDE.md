@@ -125,6 +125,8 @@ it holds one story (`argus-daily-grind`, 789K words across 5 volumes).
 - **`session_token` argument pattern deviates from `ISOLATION_AND_SECURITY.md` rule 4** (which specifies `ctx.auth.userId`). Interim by design — see URGENT item 11 for the resolution path. Until then, add the lint/grep gate described there before any PR touches a mutation.
 - **Isolation-adversarial test category not yet built** (URGENT item 7). First PR that adds a Day-3 mutation must also add the corresponding adversarial test in `packages/test/isolation/` — do not let this backlog grow.
 - **R2 blob path + mark-sweep GC job not yet implemented.** Blobs are inline-only in Convex today. Lands when the art worker wires fal.ai → R2 (Day 4).
+- **Quiet Vale backup to a separate repo pending.** The family's active shared world is only in Convex right now. User flagged 2026-04-20: "Quiet Vale needs a back up soon to a different repo." Design a `scripts/backup-world.mjs` that exports world state (entities, components, artifact_versions, blobs) to a tarball + pushes to a dedicated `weaver-family-worlds` git repo. Restore is `npx convex import` (Pro) or a custom importer re-creating entities from blob hashes. Spec 12 §Periodic snapshot has the shape. Do not delete or overwrite Quiet Vale.
+- **`preauthorizeHousehold` is forward-only.** Adds memberships to existing worlds; doesn't auto-share future ones. When Lilith creates a new shared world, the mutation must be re-run. See `project_household_and_worlds` memory.
 
 ## Investigation notes
 
