@@ -1,10 +1,14 @@
 import { handleErrorWithSentry } from "@sentry/sveltekit";
 import * as Sentry from "@sentry/sveltekit";
-import { PUBLIC_SENTRY_DSN } from "$env/static/public";
+
+// Read via import.meta.env so a missing var compiles cleanly (unlike
+// `$env/static/public` which errors at build time if the key isn't
+// declared in every environment).
+const dsn = (import.meta.env.PUBLIC_SENTRY_DSN as string | undefined) ?? "";
 
 Sentry.init({
-	dsn: PUBLIC_SENTRY_DSN,
-	enabled: !!PUBLIC_SENTRY_DSN,
+	dsn,
+	enabled: !!dsn,
 	tracesSampleRate: 0,
 	environment: import.meta.env.MODE
 });
