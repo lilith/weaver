@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel.js";
 import { resolveSession } from "./sessions.js";
 import { writeJSONBlob } from "./blobs.js";
 import { scheduleArtForEntity } from "./art.js";
+import { isFeatureEnabled } from "./flags.js";
 import { initWorldTime } from "@weaver/engine/clock";
 
 type Entity = {
@@ -106,6 +107,12 @@ export const importWorldBundle = mutation({
       created_at: now,
     });
 
+    // Resolve once: gate auto-art on flag.art_curation for this world.
+    const curationOn = await isFeatureEnabled(ctx, "flag.art_curation", {
+      world_id: worldId,
+      user_id,
+    });
+
     // Write each entity. Preserve authored slug.
     const slugToEntityId = new Map<string, Id<"entities">>();
     let starterEntityId: Id<"entities"> | null = null;
@@ -145,7 +152,8 @@ export const importWorldBundle = mutation({
         starterEntityId = entityId;
       }
       // Kick off scene art for locations as they're created. Async.
-      if (e.type === "location") {
+      // Skipped when flag.art_curation is on (art is user-click only).
+      if (e.type === "location" && !curationOn) {
         await scheduleArtForEntity(ctx, entityId);
       }
     }

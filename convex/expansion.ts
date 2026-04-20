@@ -273,10 +273,15 @@ export const insertExpandedLocation = internalMutation({
       created_at: now,
     });
 
+    // Auto-art gated by flag.art_curation. When curation is on, art is
+    // user-click only via art_curation.conjureForEntity.
+    const curationOn = await isFeatureEnabled(ctx, "flag.art_curation", {
+      world_id,
+      user_id,
+    });
+
     if (effectiveMode === "prefetch") {
-      // Schedule art but don't move the character — the draft is
-      // dormant until someone actually picks the triggering option.
-      await scheduleArtForEntity(ctx, entityId);
+      if (!curationOn) await scheduleArtForEntity(ctx, entityId);
       return { new_location_slug: finalSlug, mode: "prefetch" as const };
     }
 
@@ -304,8 +309,9 @@ export const insertExpandedLocation = internalMutation({
     });
 
     // Kick off scene art — async; page renders text instantly, image
-    // appears on next visit (or refresh) when FLUX finishes.
-    await scheduleArtForEntity(ctx, entityId);
+    // appears on next visit (or refresh) when FLUX finishes. Skipped
+    // when flag.art_curation is on (resolved above as `curationOn`).
+    if (!curationOn) await scheduleArtForEntity(ctx, entityId);
 
     return { new_location_slug: finalSlug, mode: "expand" as const };
   },

@@ -402,6 +402,66 @@ test.describe("Isolation — cross-user", () => {
 		);
 	});
 
+	test("B cannot getRenderingsForEntity on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		const res = await client.query(api.cli.getEntity, {
+			session_token: tokenA,
+			world_slug: slug,
+			type: "character",
+			slug: "mara"
+		});
+		if (!res) test.skip();
+		await expectForbidden(
+			() =>
+				client.query(api.art_curation.getRenderingsForEntity, {
+					session_token: tokenB,
+					world_slug: slug,
+					entity_id: res!.id
+				}),
+			"art_curation.getRenderingsForEntity"
+		);
+	});
+
+	test("B cannot conjureForEntity on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		const res = await client.query(api.cli.getEntity, {
+			session_token: tokenA,
+			world_slug: slug,
+			type: "character",
+			slug: "mara"
+		});
+		if (!res) test.skip();
+		await expectForbidden(
+			() =>
+				client.action(api.art_curation.conjureForEntity, {
+					session_token: tokenB,
+					world_slug: slug,
+					entity_id: res!.id,
+					mode: "tarot_card"
+				}),
+			"art_curation.conjureForEntity"
+		);
+	});
+
+	test("B cannot migrate A's art", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.art_curation.migrateArtToRenderings, {
+					session_token: tokenB,
+					world_slug: slug,
+					confirm: "yes-migrate-art"
+				}),
+			"art_curation.migrateArtToRenderings"
+		);
+	});
+
 	test("B cannot listForNpc against A's world", async () => {
 		const client = new ConvexHttpClient(CONVEX_URL);
 		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });

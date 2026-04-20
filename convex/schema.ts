@@ -81,6 +81,9 @@ export default defineSchema({
     current_location_id: v.optional(v.id("entities")),
     state: v.any(),
     schema_version: v.number(),
+    // Preferred art mode when this character views a location.
+    // Falls through to top-voted existing mode → `ambient_palette`.
+    art_mode_preferred: v.optional(v.string()),
     created_at: v.number(),
     updated_at: v.number(),
   })
@@ -335,6 +338,64 @@ export default defineSchema({
       "character_id",
       "status",
     ]),
+
+  // ---------------------------------------------------------------
+  // Art curation — spec ART_CURATION.md. Multiple renderings per entity
+  // per mode; accumulate variants over time via regen.
+  entity_art_renderings: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    entity_id: v.id("entities"),
+    mode: v.string(), // banner | portrait_badge | tarot_card | illumination | ambient_palette | hero_full | ...
+    variant_index: v.number(), // 1..N within (entity, mode)
+    blob_hash: v.optional(v.string()), // set when ready; absent while queued/generating
+    status: v.union(
+      v.literal("queued"),
+      v.literal("generating"),
+      v.literal("ready"),
+      v.literal("failed"),
+      v.literal("hidden"),
+    ),
+    prompt_used: v.string(),
+    requested_by_user_id: v.id("users"),
+    upvote_count: v.number(),
+    error: v.optional(v.string()),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_entity_mode", ["entity_id", "mode", "upvote_count"])
+    .index("by_entity_mode_variant", ["entity_id", "mode", "variant_index"])
+    .index("by_world", ["world_id"])
+    .index("by_status", ["status", "created_at"]),
+
+  art_feedback: defineTable({
+    world_id: v.id("worlds"),
+    rendering_id: v.id("entity_art_renderings"),
+    user_id: v.id("users"),
+    action: v.union(
+      v.literal("upvote"),
+      v.literal("downvote"),
+      v.literal("delete"),
+      v.literal("undelete"),
+      v.literal("regen_requested"),
+      v.literal("reference_board_add"),
+      v.literal("feedback_comment"),
+    ),
+    comment: v.optional(v.string()),
+    created_at: v.number(),
+  })
+    .index("by_rendering", ["rendering_id"])
+    .index("by_world_user", ["world_id", "user_id"]),
+
+  art_reference_board: defineTable({
+    world_id: v.id("worlds"),
+    rendering_id: v.id("entity_art_renderings"),
+    kind: v.string(), // "style" | "character:<slug>" | "biome:<slug>" | "mode:<mode>"
+    added_by_user_id: v.id("users"),
+    caption: v.optional(v.string()),
+    order: v.number(),
+    created_at: v.number(),
+  }).index("by_world_kind", ["world_id", "kind", "order"]),
 
   // ---------------------------------------------------------------
   // Feature flags — one row per (key, scope). Resolution char→user→world→global.

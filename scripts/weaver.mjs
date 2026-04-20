@@ -1614,39 +1614,173 @@ function renderFlowResult(r) {
 }
 
 // ---------------------------------------------------------------
-// Commands: art (regen / show — full curation with variants pending
-// FEATURE_REGISTRY #12 art_curation)
+// Commands: art — full wardrobe from feature #12 art_curation.
+//
+//   art modes                             list Wave-2 modes
+//   art variants <entity_slug> [type]     wardrobe: renderings by mode
+//   art conjure <entity_slug> <mode> [type]  new rendering (Opus/FLUX)
+//   art regen-variant <rendering_id>      new variant, same mode
+//   art delete <rendering_id>             soft-delete (status=hidden)
+//   art undelete <rendering_id>           recover a hidden variant
+//   art upvote <rendering_id>             +1 upvote
+//   art feedback <rendering_id> "..."     free-text feedback
+//   art board-add <rendering_id> <kind>   push to reference board
+//   art migrate <world_slug>              retrofit legacy art_blob_hash
+//   art regen <location_slug>             legacy pre-curation path
+//   art show <entity_slug> [type]         entity lookup
 
 async function cmdArt([sub, ...a]) {
   needSession();
   const client = getClient();
-  const world_slug = currentWorld();
-  if (!sub || sub === "show") {
+  const world_slug = () => flags.world ?? cfg.world_slug ?? (err("no world", 2), "");
+  const actorMode = () => cfg.mode === "author" || flags.as;
+
+  if (sub === "modes") {
+    return out(
+      { wave_2: ["ambient_palette", "banner", "portrait_badge", "tarot_card", "illumination"] },
+      (o) => `wave 2 modes: ${o.wave_2.join(", ")}`,
+    );
+  }
+  if (sub === "variants") {
     const [slug, typeArg] = a;
-    if (!slug) err("usage: weaver art show <entity_slug> [type=location]", 2);
+    if (!slug) err("usage: weaver art variants <entity_slug> [type]", 2);
     const t = typeArg ?? "location";
     const e = await client.query(ref("cli.getEntity"), {
       session_token: cfg.session_token,
-      world_slug,
+      world_slug: world_slug(),
       type: t,
       slug,
     });
     if (!e) err(`entity not found: ${t}/${slug}`, 3);
-    return out(
-      {
-        id: e.id,
-        type: e.type,
-        slug: e.slug,
-        // art_blob_hash + art_status are entity-row fields; not in payload
-        // but the listEntities query surfaced them. Re-query via listEntities
-        // for the same info plus status.
-      },
-      (o) => `entity ${o.type}/${o.slug} id=${o.id}`,
+    const r = await client.query(ref("art_curation.getRenderingsForEntity"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      entity_id: e.id,
+    });
+    return out(r, (o) => {
+      if (!o) return "(no renderings — flag off?)";
+      const lines = [`${o.entity_type}/${o.entity_slug} (${o.entity_id})`];
+      const modes = Object.keys(o.modes ?? {}).sort();
+      if (modes.length === 0) lines.push("  (no variants yet)");
+      for (const mode of modes) {
+        lines.push(`  ${mode}:`);
+        for (const v of o.modes[mode]) {
+          lines.push(
+            `    v${v.variant_index}  id=${v.id}  ${v.status.padEnd(10)}  ↑${v.upvote_count}  hash=${v.blob_hash ? v.blob_hash.slice(0, 8) : "-"}`,
+          );
+        }
+      }
+      return lines.join("\n");
+    });
+  }
+  if (sub === "conjure") {
+    if (!actorMode()) err("observer mode: conjure is author-only", 2);
+    const [slug, mode, typeArg] = a;
+    if (!slug || !mode)
+      err("usage: weaver art conjure <entity_slug> <mode> [type]", 2);
+    const t = typeArg ?? "location";
+    const e = await client.query(ref("cli.getEntity"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      type: t,
+      slug,
+    });
+    if (!e) err(`entity not found: ${t}/${slug}`, 3);
+    const r = await client.action(ref("art_curation.conjureForEntity"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      entity_id: e.id,
+      mode,
+    });
+    return out(r, (o) => `conjured ${mode} rendering ${o.rendering_id} (${o.status})`);
+  }
+  if (sub === "regen-variant") {
+    if (!actorMode()) err("observer mode: regen-variant is author-only", 2);
+    const [rid] = a;
+    if (!rid) err("usage: weaver art regen-variant <rendering_id>", 2);
+    const r = await client.action(ref("art_curation.regenVariant"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      rendering_id: rid,
+    });
+    return out(r, (o) => `new variant ${o.rendering_id} (${o.status})`);
+  }
+  if (sub === "delete") {
+    if (!actorMode()) err("observer mode: delete is author-only", 2);
+    const [rid] = a;
+    if (!rid) err("usage: weaver art delete <rendering_id>", 2);
+    const r = await client.mutation(ref("art_curation.deleteVariant"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      rendering_id: rid,
+    });
+    return out(r, () => `hid ${rid}`);
+  }
+  if (sub === "undelete") {
+    if (!actorMode()) err("observer mode: undelete is author-only", 2);
+    const [rid] = a;
+    if (!rid) err("usage: weaver art undelete <rendering_id>", 2);
+    const r = await client.mutation(ref("art_curation.undeleteVariant"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      rendering_id: rid,
+    });
+    return out(r, () => `recovered ${rid}`);
+  }
+  if (sub === "upvote") {
+    const [rid] = a;
+    if (!rid) err("usage: weaver art upvote <rendering_id>", 2);
+    const r = await client.mutation(ref("art_curation.upvoteVariant"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      rendering_id: rid,
+    });
+    return out(r, (o) =>
+      o.already ? `already upvoted ${rid}` : `upvoted ${rid} (count=${o.upvote_count})`,
     );
   }
+  if (sub === "feedback") {
+    const [rid, ...words] = a;
+    if (!rid || words.length === 0)
+      err('usage: weaver art feedback <rendering_id> "comment"', 2);
+    const r = await client.mutation(ref("art_curation.addFeedback"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      rendering_id: rid,
+      comment: words.join(" "),
+    });
+    return out(r, () => `feedback logged`);
+  }
+  if (sub === "board-add") {
+    if (!actorMode()) err("observer mode: board-add is author-only", 2);
+    const [rid, kind, ...rest] = a;
+    if (!rid || !kind)
+      err('usage: weaver art board-add <rendering_id> <kind> [--caption "..."]', 2);
+    const capIdx = rest.indexOf("--caption");
+    const caption = capIdx >= 0 ? rest[capIdx + 1] : undefined;
+    const r = await client.mutation(ref("art_curation.addToReferenceBoard"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      rendering_id: rid,
+      kind,
+      caption,
+    });
+    return out(r, (o) => `added to board kind=${kind} order=${o.order}`);
+  }
+  if (sub === "migrate") {
+    if (!actorMode()) err("observer mode: migrate is owner-only", 2);
+    const [target] = a;
+    const slug = target ?? world_slug();
+    const r = await client.mutation(ref("art_curation.migrateArtToRenderings"), {
+      session_token: cfg.session_token,
+      world_slug: slug,
+      confirm: "yes-migrate-art",
+    });
+    return out(r, (o) => `migrated=${o.migrated} skipped=${o.skipped} total=${o.total_entities}`);
+  }
+  // Legacy paths (pre-curation):
   if (sub === "regen") {
-    if (cfg.mode !== "author" && !flags.as)
-      err("observer mode: regen is author-only", 2);
+    if (!actorMode()) err("observer mode: regen is author-only", 2);
     const [slug] = a;
     if (!slug) err("usage: weaver art regen <location_slug>", 2);
     const r = await client.action(ref("art.regenerateArt"), {
@@ -1654,9 +1788,22 @@ async function cmdArt([sub, ...a]) {
       world_id: cfg.world_id,
       location_slug: slug,
     });
-    return out(r, () => `regen queued for location/${slug}`);
+    return out(r, () => `regen queued for location/${slug} (legacy path)`);
   }
-  err("usage: weaver art [show|regen] <slug> [type]", 2);
+  if (sub === "show") {
+    const [slug, typeArg] = a;
+    if (!slug) err("usage: weaver art show <entity_slug> [type]", 2);
+    const t = typeArg ?? "location";
+    const e = await client.query(ref("cli.getEntity"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      type: t,
+      slug,
+    });
+    if (!e) err(`entity not found: ${t}/${slug}`, 3);
+    return out(e, (o) => `entity ${o.type}/${o.slug} id=${o.id}`);
+  }
+  err("usage: weaver art [modes|variants|conjure|regen-variant|delete|undelete|upvote|feedback|board-add|migrate|show|regen] ...", 2);
 }
 
 // ---------------------------------------------------------------

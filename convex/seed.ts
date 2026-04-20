@@ -9,6 +9,7 @@ import type { Id } from "./_generated/dataModel.js";
 import { writeJSONBlob } from "./blobs.js";
 import { resolveSession } from "./sessions.js";
 import { scheduleArtForEntity } from "./art.js";
+import { isFeatureEnabled } from "./flags.js";
 import { initWorldTime } from "@weaver/engine/clock";
 
 type Template = "quiet-vale";
@@ -220,8 +221,15 @@ export const seedStarterWorld = mutation({
     );
 
     // Kick off scene-art generation for the seeded locations. Async.
-    await scheduleArtForEntity(ctx, villageSquareId);
-    await scheduleArtForEntity(ctx, maraCottageId);
+    // Skipped when flag.art_curation is on (art is user-click then).
+    const curationOn = await isFeatureEnabled(ctx, "flag.art_curation", {
+      world_id: worldId,
+      user_id,
+    });
+    if (!curationOn) {
+      await scheduleArtForEntity(ctx, villageSquareId);
+      await scheduleArtForEntity(ctx, maraCottageId);
+    }
 
     // The caller's character for this world.
     await ctx.db.insert("characters", {

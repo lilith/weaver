@@ -12,7 +12,8 @@
     "./clock": "./src/clock/index.ts",
     "./flags": "./src/flags/index.ts",
     "./effects": "./src/effects/index.ts",
-    "./flows": "./src/flows/index.ts"
+    "./flows": "./src/flows/index.ts",
+    "./art": "./src/art/prompts.ts"
   },
   "peerDependencies": {
     "@noble/hashes": "*",
