@@ -24,6 +24,8 @@ import {
   traceReferencedPaths,
 } from "@weaver/engine/clock";
 import { scheduleArtForEntity } from "./art.js";
+import { sanitizeLocationPayload } from "@weaver/engine/diagnostics";
+import { logBugs } from "./diagnostics.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 // --------------------------------------------------------------------
@@ -880,6 +882,15 @@ export const pushEntityPayload = mutation({
       payload = JSON.parse(payload_json);
     } catch (e: any) {
       throw new Error(`payload_json not parseable: ${e?.message ?? e}`);
+    }
+    // Sanitize location payloads at author time — catch malformed
+    // options/effects + undeclared state_keys as info-severity bugs.
+    if (type === "location") {
+      const { payload: sanitized, fixes } = sanitizeLocationPayload(payload);
+      if (fixes.length > 0) {
+        await logBugs(ctx, fixes, { world_id: world._id, branch_id: world.current_branch_id });
+      }
+      payload = sanitized as Record<string, unknown>;
     }
     const entity = (await ctx.db
       .query("entities")

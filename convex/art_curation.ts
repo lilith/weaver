@@ -29,6 +29,7 @@ import { internal, api } from "./_generated/api.js";
 import { resolveSession, resolveMember } from "./sessions.js";
 import { isFeatureEnabled } from "./flags.js";
 import { readJSONBlob } from "./blobs.js";
+import { appendMentorship } from "./mentorship.js";
 import {
   MODE_PROMPTS,
   MODE_SIZES,
@@ -744,6 +745,13 @@ export const addToReferenceBoard = mutation({
       caption,
       order: nextOrder,
       created_at: Date.now(),
+    });
+    await appendMentorship(ctx, {
+      world_id: world._id,
+      user_id,
+      scope: "art.reference_board_add",
+      context: { rendering_id, kind, caption },
+      human_action: { board_id: id, order: nextOrder },
     });
     return { id, order: nextOrder };
   },

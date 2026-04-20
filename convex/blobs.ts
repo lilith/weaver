@@ -1,7 +1,7 @@
 // Content-addressed blob storage — mark-sweep GC (rule #6 — no ref_count).
-// Inline-only in Wave 0; R2 path lands with the art worker.
+// Inline storage for JSON + small assets; R2 for images.
 
-import { internalMutation, internalQuery } from "./_generated/server.js";
+import { internalMutation, internalQuery, query } from "./_generated/server.js";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel.js";
 import {
@@ -97,6 +97,109 @@ export const getBlob = internalQuery({
       size: row.size,
       content_type: row.content_type,
       storage: row.storage,
+    };
+  },
+});
+
+// --------------------------------------------------------------------
+// Mark-sweep GC (spec 12). Runs weekly. Walks every referrer column,
+// collects referenced hashes, deletes blobs rows that are (a) not in
+// the referent set and (b) older than BLOB_GC_AGE_MS. Inline blobs
+// release storage immediately; r2-storage orphans are counted but
+// not deleted — a separate cloudflare worker handles R2 object sweep
+// against the manifest we emit.
+
+const BLOB_GC_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d
+
+export const gcBlobs = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const cutoff = now - BLOB_GC_AGE_MS;
+    const referenced = new Set<string>();
+    // Walk every column that carries a blob hash. All loops are
+    // single-table scans — cheap at our scale.
+    for (const e of await ctx.db.query("entities").collect()) {
+      if (e.art_blob_hash) referenced.add(e.art_blob_hash);
+    }
+    for (const v of await ctx.db.query("artifact_versions").collect()) {
+      if (v.blob_hash) referenced.add(v.blob_hash);
+    }
+    for (const c of await ctx.db.query("components").collect()) {
+      if (c.blob_hash) referenced.add(c.blob_hash);
+    }
+    for (const r of await ctx.db.query("entity_art_renderings").collect()) {
+      if (r.blob_hash) referenced.add(r.blob_hash);
+    }
+    const rows = await ctx.db.query("blobs").collect();
+    let inlineDeleted = 0;
+    let r2Orphaned = 0;
+    let kept = 0;
+    const r2Keys: string[] = [];
+    for (const row of rows) {
+      const stale = row.created_at < cutoff;
+      const orphan = !referenced.has(row.hash);
+      if (orphan && stale) {
+        if (row.storage === "inline") {
+          await ctx.db.delete(row._id);
+          inlineDeleted++;
+        } else if (row.storage === "r2") {
+          // Flag but don't delete the row — a separate R2 sweep needs
+          // the hash list. We emit r2Keys in the return for the worker.
+          r2Orphaned++;
+          if (row.r2_key) r2Keys.push(row.r2_key);
+        }
+      } else {
+        kept++;
+      }
+    }
+    return {
+      inline_deleted: inlineDeleted,
+      r2_orphaned: r2Orphaned,
+      kept,
+      ran_at: now,
+      r2_keys_for_sweep: r2Keys.slice(0, 200),
+    };
+  },
+});
+
+/** CLI surface to preview GC without running it. */
+export const previewBlobGc = query({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const cutoff = now - BLOB_GC_AGE_MS;
+    const referenced = new Set<string>();
+    for (const e of await ctx.db.query("entities").collect())
+      if (e.art_blob_hash) referenced.add(e.art_blob_hash);
+    for (const v of await ctx.db.query("artifact_versions").collect())
+      referenced.add(v.blob_hash);
+    for (const c of await ctx.db.query("components").collect())
+      referenced.add(c.blob_hash);
+    for (const r of await ctx.db.query("entity_art_renderings").collect())
+      if (r.blob_hash) referenced.add(r.blob_hash);
+    let inlineStale = 0;
+    let r2Stale = 0;
+    let totalInline = 0;
+    let totalR2 = 0;
+    let bytesInlineStale = 0;
+    for (const row of await ctx.db.query("blobs").collect()) {
+      if (row.storage === "inline") totalInline++;
+      else totalR2++;
+      if (!referenced.has(row.hash) && row.created_at < cutoff) {
+        if (row.storage === "inline") {
+          inlineStale++;
+          bytesInlineStale += row.size ?? 0;
+        } else r2Stale++;
+      }
+    }
+    return {
+      inline_stale: inlineStale,
+      r2_stale: r2Stale,
+      bytes_inline_stale: bytesInlineStale,
+      total_inline: totalInline,
+      total_r2: totalR2,
+      cutoff_at: cutoff,
     };
   },
 });

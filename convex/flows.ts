@@ -340,6 +340,7 @@ async function runStep(
     state_json: mergedState,
     status,
     append_says: allSays,
+    effect_kinds: (result.effects ?? []).map((e: any) => String(e?.kind ?? "unknown")),
   });
   // Route step-returned effects through the central effect router —
   // so combat damage actually hits character.hp, give_item populates
@@ -482,14 +483,34 @@ export const advanceFlowRow = internalMutation({
       v.literal("escaped"),
     ),
     append_says: v.array(v.string()),
+    effect_kinds: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
+    const priorFlow = await ctx.db.get(args.flow_id);
     await ctx.db.patch(args.flow_id, {
       current_step_id: args.current_step_id ?? undefined,
       state_json: args.state_json,
       status: args.status,
       updated_at: Date.now(),
     });
+    // Append a flow_transitions row capturing the step advance. Gives
+    // a replayable trail when a flow misbehaves without turning every
+    // hiccup into a runtime_bug.
+    if (priorFlow) {
+      const branch = await ctx.db.get(priorFlow.branch_id);
+      await ctx.db.insert("flow_transitions", {
+        world_id: priorFlow.world_id,
+        branch_id: priorFlow.branch_id,
+        flow_id: args.flow_id,
+        turn: ((branch?.state as any)?.turn ?? 0) as number,
+        from_step_id: priorFlow.current_step_id ?? null,
+        to_step_id: args.current_step_id,
+        status: args.status,
+        says_count: args.append_says.length,
+        effect_kinds: args.effect_kinds ?? [],
+        at: Date.now(),
+      });
+    }
     // Also append flow says onto the character's pending_says so the
     // next location render shows them.
     if (args.append_says.length > 0) {
@@ -506,6 +527,57 @@ export const advanceFlowRow = internalMutation({
         }
       }
     }
+  },
+});
+
+/** Weekly GC — prune flow_transitions older than 14 days. Kept short
+ *  because these rows are diagnostic-only; runtime code doesn't read
+ *  them. Sweep horizon mirrors runtime_bugs (warn/error) policy. */
+export const gcFlowTransitions = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const rows = await ctx.db.query("flow_transitions").collect();
+    let deleted = 0;
+    for (const r of rows) {
+      if (r.at < cutoff) {
+        await ctx.db.delete(r._id);
+        deleted++;
+      }
+    }
+    return { deleted, kept: rows.length - deleted };
+  },
+});
+
+/** List transitions for a flow — CLI-surface for debugging. */
+export const listFlowTransitions = query({
+  args: {
+    session_token: v.string(),
+    flow_id: v.id("flows"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { session_token, flow_id, limit }) => {
+    const flow = await ctx.db.get(flow_id);
+    if (!flow) return [];
+    // Soft-404 for non-owners.
+    const character = await ctx.db.get(flow.character_id);
+    if (!character) return [];
+    const { user_id } = await resolveMember(ctx as any, session_token, flow.world_id);
+    if (character.user_id !== user_id) return [];
+    const rows = await ctx.db
+      .query("flow_transitions")
+      .withIndex("by_flow_time", (q: any) => q.eq("flow_id", flow_id))
+      .collect();
+    rows.sort((a: any, b: any) => a.at - b.at);
+    return rows.slice(-(limit ?? 100)).map((r: any) => ({
+      turn: r.turn,
+      from: r.from_step_id,
+      to: r.to_step_id,
+      status: r.status,
+      says: r.says_count,
+      effects: r.effect_kinds,
+      at: r.at,
+    }));
   },
 });
 

@@ -733,14 +733,20 @@ export const prefetchContext = internalQuery({
       ctx as any,
       parent as any,
     );
+    // Per-location opt-out: authors set `prefetch: false` on ritual /
+    // gating / suspense locations where speculative expansion is wrong.
+    if ((payload as any).prefetch === false) {
+      return { flag_on: false, branch_id, parent_entity_id: parent._id, options: [] };
+    }
     const rawOpts = Array.isArray((payload as any).options)
-      ? ((payload as any).options as Array<{ label: string; target?: string }>)
+      ? ((payload as any).options as Array<{ label: string; target?: string; prefetch?: boolean }>)
       : [];
-    // Find unresolved-target options.
+    // Find unresolved-target options, honoring per-option prefetch opt-out.
     const options: Array<{ option_label: string; option_index: number }> = [];
     for (let i = 0; i < rawOpts.length; i++) {
       const o = rawOpts[i];
       if (!o.target) continue; // no target = say-only; nothing to prefetch
+      if (o.prefetch === false) continue; // explicit opt-out on this option
       const exists = await ctx.db
         .query("entities")
         .withIndex("by_branch_type_slug", (q) =>
@@ -754,13 +760,26 @@ export const prefetchContext = internalQuery({
         options.push({ option_label: o.label, option_index: i });
       }
     }
-    // Flag check for this (world, user) combination.
+    // Flag check for this (world, user) combination, plus per-character
+    // prefer_prefetch toggle (opt-out at character level).
     const flag_on = await isFeatureEnabled(ctx, "flag.text_prefetch", {
       user_id,
       world_id,
     });
+    let character_opts_in = true;
+    if (flag_on) {
+      const character = await ctx.db
+        .query("characters")
+        .withIndex("by_world_user", (q: any) =>
+          q.eq("world_id", world_id).eq("user_id", user_id),
+        )
+        .first();
+      if (character && (character as any).prefer_prefetch === false) {
+        character_opts_in = false;
+      }
+    }
     return {
-      flag_on,
+      flag_on: flag_on && character_opts_in,
       branch_id,
       parent_entity_id: parent._id,
       options,

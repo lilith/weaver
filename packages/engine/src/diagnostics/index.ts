@@ -303,5 +303,62 @@ export function sanitizeLocationPayload(
 		delete safe.slug;
 	}
 
+	// state_keys invariant — every var referenced in the template that
+	// starts with `this.` must be declared in `state_keys`. Prefixes
+	// `character.`, `world.`, `location.`, and builtins (has, length,
+	// rand, dice, min, max, pick, null, true, false, undefined) are
+	// intrinsic — no declaration required. Soft-warn only (info
+	// severity): authors get a nudge without blocking save.
+	if (typeof safe.description_template === "string") {
+		const declared = new Set<string>(
+			Array.isArray(safe.state_keys) ? (safe.state_keys as string[]) : [],
+		);
+		const builtins = new Set([
+			"has",
+			"length",
+			"rand",
+			"rand_int",
+			"dice",
+			"min",
+			"max",
+			"pick",
+			"null",
+			"true",
+			"false",
+			"undefined",
+		]);
+		// Extract {{...}} contents and pull dotted-path tokens from them.
+		// Not a full parser — just enough to flag obvious "did you forget
+		// to declare this.foo?" mistakes.
+		const tagRe = /\{\{\s*(?:#if|#unless)?\s*([^}]+?)\s*\}\}/g;
+		const seen = new Set<string>();
+		let m: RegExpExecArray | null;
+		while ((m = tagRe.exec(safe.description_template as string))) {
+			const body = m[1].trim();
+			if (body.startsWith("/")) continue; // closing tag
+			// Pull identifier-like tokens; skip strings + numbers.
+			const idRe = /\b([a-zA-Z_][a-zA-Z_0-9.]*)\b/g;
+			let im: RegExpExecArray | null;
+			while ((im = idRe.exec(body))) {
+				const id = im[1];
+				if (builtins.has(id)) continue;
+				if (/^\d/.test(id)) continue;
+				if (id.startsWith("character.") || id.startsWith("world.") || id.startsWith("location.")) continue;
+				if (!id.startsWith("this.")) continue;
+				const key = id.slice("this.".length).split(".")[0];
+				if (!key || seen.has(key)) continue;
+				seen.add(key);
+				if (!declared.has(key)) {
+					fixes.push({
+						code: "loc.payload.template.undeclared_state_key",
+						severity: "info",
+						message: `description_template uses this.${key} but state_keys doesn't declare it`,
+						context: { key, slug: safe.slug },
+					});
+				}
+			}
+		}
+	}
+
 	return { payload: safe, fixes };
 }

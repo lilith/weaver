@@ -87,6 +87,10 @@ export default defineSchema({
     // Preferred art mode when this character views a location.
     // Falls through to top-voted existing mode → `ambient_palette`.
     art_mode_preferred: v.optional(v.string()),
+    // Per-character prefetch opt-in/out (spec 04 §Predictive text prefetch).
+    // Absent or true = follow the world flag; explicit false opts this
+    // character out even when flag.text_prefetch is on.
+    prefer_prefetch: v.optional(v.boolean()),
     // Eras v2 — era the character has acknowledged. When worlds.
     // active_era > personal_era, the player sees a catch-up chronicle
     // panel on their next applyOption; acknowledging advances this
@@ -236,6 +240,32 @@ export default defineSchema({
   })
     .index("by_branch_character", ["branch_id", "character_id"])
     .index("by_world_status", ["world_id", "status"]),
+
+  // ---------------------------------------------------------------
+  // Flow transitions — append-only diagnostic trail of every step
+  // advance in every flow. When a flow misbehaves, runtime_bugs
+  // catches errors but not the SHAPE of the path; this table answers
+  // "which steps ran in what order with what effects" for any flow.
+  // GC policy: sweep rows older than 14 days weekly.
+  flow_transitions: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    flow_id: v.id("flows"),
+    turn: v.number(),
+    from_step_id: v.union(v.string(), v.null()),
+    to_step_id: v.union(v.string(), v.null()),
+    status: v.union(
+      v.literal("running"),
+      v.literal("waiting"),
+      v.literal("completed"),
+      v.literal("escaped"),
+    ),
+    says_count: v.number(),
+    effect_kinds: v.array(v.string()),
+    at: v.number(),
+  })
+    .index("by_flow_time", ["flow_id", "at"])
+    .index("by_world_time", ["world_id", "at"]),
 
   // ---------------------------------------------------------------
   // Chat — reactive, per-world, per-location

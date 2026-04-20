@@ -178,6 +178,83 @@ async function loadAllRaw(
   }));
 }
 
+// --------------------------------------------------------------------
+// Weekly decay / compaction cron — keeps prompt signal-to-noise clean
+// as worlds age. Per (world, npc): when the NPC has > NPC_MEMORY_CAP
+// rows, fold the oldest low-salience batch into one synthesized
+// "compacted_summary" row and delete the originals. High-salience
+// rows are never compacted — those are the load-bearing memories
+// the narrator reaches for first.
+//
+// Heuristic compaction (no LLM): grouped-by-event-type with example
+// summaries. Costs nothing to run weekly. Swap to Opus-written
+// one-paragraph synthesis when cost ledger is in place.
+
+const NPC_MEMORY_CAP = 50;
+const COMPACT_BATCH = 20;
+
+export const gcNpcMemory = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    // Collect every NPC with any memory rows, then per-NPC check count.
+    // Weekly job; O(all npc_memory rows) is fine.
+    const rows = await ctx.db.query("npc_memory").collect();
+    const byNpc = new Map<string, any[]>();
+    for (const r of rows) {
+      const key = `${r.branch_id}|${r.npc_entity_id}`;
+      const arr = byNpc.get(key) ?? [];
+      arr.push(r);
+      byNpc.set(key, arr);
+    }
+    let npcsCompacted = 0;
+    let rowsDeleted = 0;
+    let summariesAdded = 0;
+    for (const [, npcRows] of byNpc) {
+      if (npcRows.length <= NPC_MEMORY_CAP) continue;
+      // Sort oldest first; skip already-compacted + high-salience.
+      const candidates = npcRows
+        .filter((r: any) => !r.is_compacted && r.salience !== "high")
+        .sort((a: any, b: any) => a.turn - b.turn || a.created_at - b.created_at);
+      const batch = candidates.slice(0, COMPACT_BATCH);
+      if (batch.length < 5) continue; // not worth compacting tiny batches
+      // Group by event_type for a structured summary.
+      const grouped: Record<string, any[]> = {};
+      for (const r of batch) {
+        (grouped[r.event_type] ??= []).push(r);
+      }
+      const lines: string[] = [];
+      for (const [etype, group] of Object.entries(grouped)) {
+        const examples = group.slice(0, 3).map((r) => `"${r.summary}"`).join(", ");
+        const more = group.length > 3 ? ` (+${group.length - 3} more)` : "";
+        lines.push(`${group.length}× ${etype}: ${examples}${more}`);
+      }
+      const turnLo = batch[0].turn;
+      const turnHi = batch[batch.length - 1].turn;
+      const synthesized = `Across turns ${turnLo}–${turnHi}: ${lines.join("; ")}`;
+      const first = batch[0];
+      await ctx.db.insert("npc_memory", {
+        world_id: first.world_id,
+        branch_id: first.branch_id,
+        npc_entity_id: first.npc_entity_id,
+        about_character_id: first.about_character_id,
+        event_type: "compacted_summary",
+        summary: synthesized.slice(0, 1000),
+        salience: "medium",
+        turn: turnHi,
+        created_at: Date.now(),
+        is_compacted: true,
+      });
+      summariesAdded++;
+      for (const r of batch) {
+        await ctx.db.delete(r._id);
+        rowsDeleted++;
+      }
+      npcsCompacted++;
+    }
+    return { npcs_compacted: npcsCompacted, rows_deleted: rowsDeleted, summaries_added: summariesAdded };
+  },
+});
+
 /** Add a memory manually — useful for seeding + CLI. Owner-only. */
 export const addForNpc = mutation({
   args: {

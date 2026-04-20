@@ -451,15 +451,38 @@ export const applyOption = mutation({
             dilation = rules.time_dilation;
           }
 
+          // noise_decay — per-turn decrement of `this.<biome>.noise_level`.
+          // Numeric (0-1) preferred; authors can `inc` it via effects
+          // (e.g. combat += 0.3) and the decay walks it back down so
+          // spawn tables don't stick on the loudest bucket forever.
+          const decay = Number((rules as any).noise_decay ?? 0);
+          if (decay > 0) {
+            state.this ??= {};
+            (state.this as any)[effectiveBiomeSlug!] ??= {};
+            const bscope = (state.this as any)[effectiveBiomeSlug!];
+            const cur = Number(bscope.noise_level ?? 0);
+            if (Number.isFinite(cur) && cur > 0) {
+              bscope.noise_level = Math.max(0, cur - decay);
+            }
+          }
+
           // spawn_tables — pick from the noise bucket matching
-          // this.sewer-entry.noise_level (if tracked) or default
-          // to low_noise. Roll a seeded dice against spawn_chance;
-          // if it hits, emit a `say` with the picked slug. Real
-          // combat spawn happens when combat module is wired into
-          // hooks (next pass); this is the atmospheric tier.
+          // this.<biome>.noise_level (if tracked) or default to
+          // low_noise. Numeric noise thresholds: <0.33 low, <0.66 mid,
+          // else high. Strings stay literal for backward-compat.
+          // Roll a seeded dice against spawn_chance; tier-2 combat
+          // hostile flags wire in below.
           if (rules.spawn_tables && typeof rules.spawn_tables === "object") {
-            const noise =
+            const rawNoise =
               (state.this as any)?.[effectiveBiomeSlug]?.noise_level ?? "low";
+            const noise =
+              typeof rawNoise === "number"
+                ? rawNoise < 0.33
+                  ? "low"
+                  : rawNoise < 0.66
+                    ? "mid"
+                    : "high"
+                : String(rawNoise);
             const bucket =
               (rules.spawn_tables as any)[`${noise}_noise`] ??
               (rules.spawn_tables as any).low_noise ??

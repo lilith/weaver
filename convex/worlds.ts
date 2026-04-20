@@ -7,6 +7,7 @@ import { internal, api } from "./_generated/api.js";
 import { resolveSession, resolveMember } from "./sessions.js";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { initWorldTime } from "@weaver/engine/clock";
+import { appendMentorship } from "./mentorship.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Id } from "./_generated/dataModel.js";
 
@@ -722,6 +723,26 @@ export const applyBibleEdit = mutation({
     }
     const hash = await writeJSONBlob(ctx, payload);
     const nextV = bibleEntity.current_version + 1;
+    // Snapshot prior bible for the mentorship log before we advance.
+    let beforeSnapshot: Record<string, unknown> | undefined;
+    try {
+      const priorVersion = await ctx.db
+        .query("artifact_versions")
+        .withIndex("by_artifact_version", (q) =>
+          q
+            .eq("artifact_entity_id", bibleEntity._id)
+            .eq("version", bibleEntity.current_version),
+        )
+        .first();
+      if (priorVersion) {
+        beforeSnapshot = (await readJSONBlob<Record<string, unknown>>(
+          ctx as any,
+          priorVersion.blob_hash,
+        )) as Record<string, unknown>;
+      }
+    } catch {
+      /* best-effort snapshot — don't block save */
+    }
     await ctx.db.insert("artifact_versions", {
       world_id: world._id,
       branch_id: world.current_branch_id,
@@ -738,6 +759,15 @@ export const applyBibleEdit = mutation({
     await ctx.db.patch(bibleEntity._id, {
       current_version: nextV,
       updated_at: Date.now(),
+    });
+    await appendMentorship(ctx, {
+      world_id: world._id,
+      user_id,
+      scope: "bible.edit",
+      context: { bible_entity_id: bibleEntity._id, prior_version: expected_version },
+      human_action: { accepted: true, new_version: nextV, reason },
+      before: beforeSnapshot,
+      after: payload,
     });
     return { version: nextV };
   },
