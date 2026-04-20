@@ -50,6 +50,20 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 	const palette = getBiomePalette(location.biome as string);
 	const paletteCss = palette ? paletteToCss(palette) : null;
 
+	// Flag gate for the art-curation wardrobe. Falls back to the legacy
+	// art block when disabled. Resolve failures fail safe (flag off).
+	let artCurationEnabled = false;
+	try {
+		const resolved = await client.query(api.flags.resolve, {
+			session_token: locals.session_token,
+			flag_key: "flag.art_curation",
+			world_slug: params.world_slug
+		});
+		artCurationEnabled = !!(resolved as { enabled?: boolean })?.enabled;
+	} catch {
+		artCurationEnabled = false;
+	}
+
 	return {
 		location: {
 			entity_id: location.entity_id,
@@ -76,7 +90,15 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		palette: palette
 			? { slug: palette.slug, name: palette.name, mood: palette.mood, css: paletteCss }
 			: null,
-		closed_journey
+		closed_journey,
+		// Art-curation integration surface. Client uses the reactive
+		// Convex client keyed by session_token + world_slug + entity_id.
+		art_curation: {
+			enabled: artCurationEnabled,
+			world_slug: params.world_slug,
+			entity_id: location.entity_id,
+			session_token: locals.session_token
+		}
 	};
 };
 

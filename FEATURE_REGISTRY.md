@@ -44,7 +44,7 @@ Transitions: `designed → implementing → playtesting → shipped` is the happ
 | 9 | importer_cli | shipped | `spec/AUTHORING_AND_SYNC.md` | `flag.import_cli` (on) | multi_tenant_isolation | build |
 | 10 | world_clock | shipped | `spec/23_WORLD_CLOCK.md` | `flag.world_clock` (on) | — | build |
 | 11 | narrative_prompt_assembler | shipped | `spec/24_NPC_AND_NARRATIVE_PROMPTS.md` §Ask 5 | — (library) | world_clock | build |
-| 12 | art_curation | designed | `spec/ART_CURATION.md` | `flag.art_curation` | blob_storage | spec |
+| 12 | art_curation | **playtesting (backend); UI in flight** | `spec/ART_CURATION.md` | `flag.art_curation` (on: quiet-vale, the-office, sandbox) | blob_storage, effect_router | build |
 | 13 | expansion_streaming | designed | `spec/04_EXPANSION_LOOP.md` §Streaming | `flag.expansion_streaming` | expansion_loop | spec |
 | 14 | text_prefetch | **playtesting** | `spec/04_EXPANSION_LOOP.md` §Predictive text prefetch | `flag.text_prefetch` (on: quiet-vale, the-office, sandbox) | expansion_loop | build |
 | 15 | async_sync_campaign | designed | `spec/ASYNC_SYNC_PLAY.md` | `flag.campaign_events` | drafts_and_journeys | spec |
@@ -60,6 +60,7 @@ Transitions: `designed → implementing → playtesting → shipped` is the happ
 | 25 | two_way_content_sync | **shipped** | `spec/AUTHORING_AND_SYNC.md` | — | importer_cli | build |
 | 26 | module_counter | shipped (reference) | `convex/modules/counter.ts` | `flag.flows` | step_state_machine_flows | build |
 | 27 | module_dialogue | **playtesting** | `convex/modules/dialogue.ts` | `flag.module_dialogue` | step_state_machine_flows, narrative_prompt_assembler, npc_memory | build |
+| 28 | module_combat | **shipped** | `convex/modules/combat.ts` | `flag.module_combat` | step_state_machine_flows, effect_router | build |
 
 *Table maintenance: each row updated when status changes. Add a row when a new spec lands; never delete — mark `retired` or `pulled` instead.*
 

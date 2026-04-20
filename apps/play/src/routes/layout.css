@@ -281,3 +281,38 @@ a:hover {
 	outline-offset: 2px;
 	border-radius: 2px;
 }
+
+/* ============================================================
+   Art-curation: illumination drop-cap + ambient palette
+   ============================================================
+   The SceneArt wardrobe sets data-illumination="on" and an
+   --illumination-url custom property on <html> when the
+   "illumination" art mode is active. Swap the prose's first-letter
+   from the candle-gold typographic drop-cap to a rendered
+   illumination image inline.
+*/
+html[data-illumination='on'] .story-prose > p:first-of-type::first-letter {
+	color: transparent;
+	background-image: var(--illumination-url);
+	background-size: cover;
+	background-position: center;
+	padding: 0.15em 0.25em;
+	margin-right: 0.35em;
+	box-shadow: 0 0 0 1px rgba(232, 160, 36, 0.35),
+		0 0 18px rgba(232, 160, 36, 0.2);
+}
+
+/* Ambient palette tint — a warm wash added to the body backdrop when
+   the ambient_palette mode is the active display. Kept subtle; the
+   room "warms a shade", it doesn't take over. */
+html[data-ambient-tint='on'] body::after {
+	content: '';
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	z-index: 0;
+	background:
+		radial-gradient(ellipse 80% 60% at 50% 20%, rgba(232, 160, 36, 0.12), transparent 60%),
+		radial-gradient(ellipse 60% 50% at 20% 80%, rgba(240, 80, 128, 0.08), transparent 60%);
+	mix-blend-mode: screen;
+}

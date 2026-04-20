@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import SceneArt from '$lib/art/SceneArt.svelte';
 	let { data, form } = $props();
 	let expanding = $state(false);
 	let inputEl = $state<HTMLTextAreaElement | undefined>();
@@ -26,17 +27,28 @@
 
 <article class="space-y-6 pb-24">
 	<header class="space-y-2">
-		<div class="scene-art" class:scene-art-loading={!data.location.art_url}>
-			{#if data.location.art_url}
-				<img src={data.location.art_url} alt="" class="scene-art-img" loading="lazy" />
-			{:else if data.location.art_status === 'generating' || data.location.art_status === 'queued'}
-				<div class="scene-art-fallback">
-					<span class="font-hand text-candle-300">the scene is forming…</span>
-				</div>
-			{:else}
-				<div class="scene-art-fallback"></div>
-			{/if}
-		</div>
+		{#if data.art_curation?.enabled}
+			<!-- New wardrobe path — text-default; reveal via eye. -->
+			<SceneArt
+				entityId={data.art_curation.entity_id}
+				worldSlug={data.art_curation.world_slug}
+				sessionToken={data.art_curation.session_token}
+				artCurationEnabled={true}
+			/>
+		{:else}
+			<!-- Legacy single-slot art path. -->
+			<div class="scene-art" class:scene-art-loading={!data.location.art_url}>
+				{#if data.location.art_url}
+					<img src={data.location.art_url} alt="" class="scene-art-img" loading="lazy" />
+				{:else if data.location.art_status === 'generating' || data.location.art_status === 'queued'}
+					<div class="scene-art-fallback">
+						<span class="font-hand text-candle-300">the scene is forming…</span>
+					</div>
+				{:else}
+					<div class="scene-art-fallback"></div>
+				{/if}
+			</div>
+		{/if}
 		<h1 class="font-display text-4xl tracking-tight text-mist-100 sm:text-5xl">
 			{#if data.location.draft}
 				<span class="dream-glyph" title="a dream — not yet on the map">✦</span>

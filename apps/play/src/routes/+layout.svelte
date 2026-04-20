@@ -1,8 +1,15 @@
 <script lang="ts">
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { setupConvex } from 'convex-svelte';
+	import { PUBLIC_CONVEX_URL } from '$env/static/public';
 
 	let { children, data } = $props();
+
+	// Reactive Convex client — used by feature components (e.g. the
+	// art-curation wardrobe) that need live subscriptions. SSR loaders
+	// still go through the HTTP client in $lib/convex.
+	setupConvex(PUBLIC_CONVEX_URL);
 </script>
 
 <svelte:head>
