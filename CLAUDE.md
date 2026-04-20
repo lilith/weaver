@@ -2,9 +2,35 @@
 
 Read `CONTEXT-HANDOFF.md` (sibling file) for the full session snapshot of what's provisioned. This file is the standing instructions — shorter, behavior-focused.
 
+## ⚠️ URGENT — spec course corrections landed 2026-04-19
+
+A spec-review session shipped decisions that change direction on in-flight work. **Read before starting Day 3 (NPC chat + dialogue flow)** — several of these affect how flows/modules/isolation must be built from the first line of code. If you have anything in flight that contradicts, name it and propose a fix rather than silently carrying on.
+
+1. **Multi-tenant isolation from day one.** Every Convex index starts with `[world_id, ...]` or `[branch_id, ...]`. Every query/mutation/action signature requires `world_id` explicitly — no defaults, no "inferred from the user's active world." `ctx.auth.userId` is the only trusted identity source — never accept a client-passed `user_id` / `world_id` / `branch_id` / `character_id` without a membership check. AI cache keys include `world_id` and `branch_id`. Add a `world_memberships` table to the schema **before** any permission-bearing code lands. Isolation between worlds is a security boundary, not hygiene — cross-world leak = vulnerability. Full rule set + adversarial test category in **`spec/ISOLATION_AND_SECURITY.md`**. Action: audit the current `convex/schema.ts` and every existing query/mutation; refactor indexes and signatures so nothing reads without scoping.
+
+2. **Two execution paths, not three.** JSON with safe inline expressions (`{{rand() < 0.15 ? "ambush" : "normal"}}`) + modules. Do **not** build a separate inline-script interpreter with a custom grammar. **`spec/03_INLINE_SCRIPT.md`** is marked deprecated; its conditional/RNG use-cases roll into the template grammar in **`spec/02_LOCATION_SCHEMA.md`**.
+
+3. **Durable flows are step-keyed state machines, NOT generator-event-sourced replay.** A module is `{ steps: { [id]: (ctx, state) => ({ next, effects }) } }`; runtime stores `current_step_id + state`; resume is a handler lookup. No generator-replay semantics, no seed-derived cache determinism layer, no closure-capture landmines. This is directly relevant to the Day-3 dialogue flow — design it as step-keyed from the start. See **`spec/01_ARCHITECTURE.md` §"Durable runtime."**
+
+4. **Modules are trusted TypeScript in Wave 1-3.** No QuickJS WASM isolate, no capability sandbox for user-authored modules. All module code is written by you, type-checked, compiled in. The capability-sandbox concept survives as a typed-proxy for clean interfaces (`ModuleCtx`), not as a runtime isolation boundary. User-authored modules are a Wave 4+ concern if ever.
+
+5. **Multi-player sync is at-transition only, EXCEPT chat.** Durable character state syncs at location-entry and location-exit; intra-location `this.*` changes don't propagate in real-time between players. Chat stays reactive. Presence panel updates on transitions, not continuously. See **`spec/01_ARCHITECTURE.md` §"Multi-player sync"**.
+
+6. **Blob GC is mark-sweep, not refcount.** Periodic job walks live heads, marks reachable blob hashes, sweeps unreachable blobs older than N days. Drop any refcount column from the `blobs` table; drop refcount-increment/decrement paths from blob read/write. See **`spec/12_BLOB_STORAGE.md`**.
+
+7. **Testing trinity stays Wave 1, starts now.** It's the control surface that makes agent-autonomous development viable — not premature platform. Build it alongside the feature code. Isolation-adversarial tests are a mandatory category (from rule 1). The first few mutations should land with isolation tests in the same PR.
+
+8. **`AUTHORING_AND_SYNC.md` is the authoring source format.** You already used this for seeding — good. The spec is now committed at `spec/AUTHORING_AND_SYNC.md`. Keep files conforming to it; the upcoming `weaver validate / import / export` CLI will validate against that spec. Git is not in the pipeline — files are an on-demand mirror, DB is runtime truth.
+
+9. **Privacy spec collapsed.** `spec/16_PRIVACY_AND_MINORS.md` is now a ~120-line Wave-1 family-instance posture. Task **C6** (in `08_WAVE_1_DISPATCH.md`) shrank from 2 days (guardian dashboard + moderation pipeline) to ~2 hours (family-rating safety prompts + per-user cost cap wiring). Those deferred items are Wave 4+.
+
+10. **`spec/FEASIBILITY_REVIEW.md` flags 17 confident-but-unverified claims.** Cost ceilings, latency budgets, 80KB bundle target, cache hit-rate assumptions, QuickJS cold-start (moot now per #4), auto-rollback mechanics, the 95/4/1 split (moot per #2), Wave 1 scope/timeline. Measure first; don't take numeric claims on faith. Surface divergences.
+
+Velocity note: Lilith clarified that agent-fleet velocity makes the Wave 1 scope realistic (a 1-week estimate = ~30 min real time). Don't defensively scope-cut — keep the full Wave 1 ambition and ship it.
+
 ## What this project is
 
-Weaver — browser-based, AI-supported, collaborative world-building game engine. Successor to lilith/weaver-lua (2012). Spec lives in `spec/` (12 docs).
+Weaver — browser-based, AI-supported, collaborative world-building game engine. Successor to lilith/weaver-lua (2012). Spec lives in `spec/` — 18 numbered docs plus `AUTHORING_AND_SYNC.md`, `ISOLATION_AND_SECURITY.md`, `FEASIBILITY_REVIEW.md`, `HANDOFF_NOTES.md`.
 
 **Deployment model:** per-family instances. Each family gets its own deployment. Today that's one instance — Lilith's family. This collapses a lot of multi-tenant concerns (moderation scope, privacy isolation, cost attribution) into single-tenant per-instance. When the spec or you feel tempted to design around "public worlds" or "strangers in the same world," stop — that's not the shape of this product.
 
@@ -14,7 +40,7 @@ Weaver — browser-based, AI-supported, collaborative world-building game engine
 - Seeded content: Quiet Vale tiny-world (bible, village biome, Mara character, village-square + mara-cottage locations) per `spec/AUTHORING_AND_SYNC.md`. Reseed with `npx convex run 'seed:seedTinyWorld' '{"owner_email":"you@example.com"}'` — idempotent on slug.
 - Auth is a minimal Convex-native magic-link (action → Resend email → cookie session); Better Auth swap deferred until we actually need OAuth / 2FA / password. Sessions + auth_tokens live in-schema.
 - Next natural slices: Day 3 NPC chat + dialogue flow; Day 4 art pipeline (fal.ai → R2 blob path wired); Day 5+ world-bible builder UI; expansion loop (intent classifier → 8 atoms).
-- A parallel spec-review session may be happening — be open to spec changes landing that invalidate in-flight code.
+- Spec-review session landed 2026-04-19; course corrections in the URGENT block at the top of this file. Apply them before Day 3.
 
 ## Stack (locked)
 
@@ -92,7 +118,14 @@ it holds one story (`argus-daily-grind`, 789K words across 5 volumes).
 
 ## Spec status
 
-`spec/` has 12 docs from the initial design dump. A spec-review pass is expected to produce revisions and/or additional docs. When a spec doc is revised, land the revision in the same filename and update `CONTEXT-HANDOFF.md` "Spec review guidance" if the revision resolves or reframes one of the flagged tensions.
+`spec/` is the authoritative design surface. Numbered docs (00–18) cover the product; named docs cover cross-cutting concerns:
+
+- `AUTHORING_AND_SYNC.md` — file format + validator + import/export CLI for AI-authored content.
+- `ISOLATION_AND_SECURITY.md` — multi-tenant isolation rules and security-adversarial test category.
+- `FEASIBILITY_REVIEW.md` — flagged spec claims to verify before committing to them.
+- `HANDOFF_NOTES.md` — session-handoff notes; preserved historical context.
+
+When a spec changes, update in place (same filename). The URGENT block at the top of this file tracks only the course-corrections the next agent must act on immediately; stale entries get removed from that block once the correction is applied. `CONTEXT-HANDOFF.md` "Spec review guidance" is older context; `FEASIBILITY_REVIEW.md` supersedes it.
 
 ## Session-end checklist
 

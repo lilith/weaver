@@ -70,14 +70,17 @@ export type Location = z.infer<typeof LocationSchema>
 
 ## Template grammar
 
-Descriptions and option conditions support a minimal mustache-like syntax.
+Descriptions and option conditions support a minimal mustache-like syntax. As of 2026-04-19 the grammar is slightly extended to absorb the use-cases that used to live in the separate inline-script path (now deprecated; see `03_INLINE_SCRIPT.md`):
 
 ```
-{{var}}                    interpolate
-{{var.path}}               nested access
-{{#if predicate}}...{{/if}} conditional block
-{{#unless predicate}}...{{/unless}} inverted
-{{#each collection}}...{{/each}} loop
+{{var}}                                    interpolate (escaped by default)
+{{var.path}}                               nested access
+{{#if predicate}}...{{/if}}                conditional block
+{{#unless predicate}}...{{/unless}}        inverted
+{{#each collection}}...{{/each}}           loop
+{{?expr : fallback}}                       ternary-ish: interpolate expr; if undefined/falsy, fallback string
+{{rand() < P ? "a" : "b"}}                 inline random choice (uses the seeded RNG)
+{{dice(3, "d6") >= 10 ? "...": "..."}}     dice roll with stable label, result stamped into state
 ```
 
 Predicates are read-only mini-expressions:
@@ -88,9 +91,18 @@ character.level >= 5
 world.time.hour > 18
 this.visited > 3
 npc.mordred.bond > 0.5
+rand() < 0.25                             valid in predicates too; seeded
 ```
 
-No arithmetic beyond `>`, `>=`, `<`, `<=`, `==`, `!=`. No function calls except `.has()`, `.length`, `.count()`. Parses to an AST, evaluates against scoped context. Never `eval`.
+Grammar rules:
+
+- **No arithmetic beyond** `+ - * /` (for dice math) and comparisons `>`, `>=`, `<`, `<=`, `==`, `!=`, `&&`, `||`, `!`.
+- **No function calls** except the whitelist: `.has()`, `.length`, `.count()`, `rand()`, `dice(n, "dX")`, `min()`, `max()`, `pick([...])` (seeded pick-from-list).
+- **Parses to a static AST**, evaluated by a bounded interpreter. Never `eval`, never `Function`, never dynamic property access on native prototypes.
+- **RNG is seeded** — `rand()` / `dice()` / `pick()` use a seed derived from `(world_id, branch_id, character_id, location_id, template_position)` so the same template + same player state produces the same output on rerender. This is what makes the crawler and replay tests deterministic without a separate interpreter runtime.
+- **State writes from templates** happen only via explicit effects (on a location's `on_enter`, `on_leave`, or option `effect` array). Templates can *read* any scope; they cannot *write*. State-changing logic goes through effects.
+
+This grammar is the *entire* expression surface available to content authors. Anything that doesn't fit — multi-step stateful logic, cross-turn tracking, dialogue trees — moves to a module (`01_ARCHITECTURE.md` §"Path 2 — durable module").
 
 ## Scoped state
 
@@ -241,9 +253,9 @@ The `needs_expansion` event triggers the expansion loop (see `04_EXPANSION_LOOP.
 
 The `maybe_ambush` event is consumed by the combat system (Wave 1 hardcoded, Wave 2 module). On roll-success it injects a combat encounter; on roll-fail the player passes through.
 
-### Example 5 — An inline-script location (Path 2)
+### Example 5 — A location with inline random choice + module hand-off
 
-When the location needs small runtime logic, the JSON points to an inline script:
+The use cases the (now-deprecated) inline-script path was meant to serve — random encounters, conditional multi-step dialogue, dice-driven outcomes — are now served either by inline expressions in the template grammar (simple cases) or by a module (anything stateful across turns). Example:
 
 ```json
 {
@@ -251,14 +263,19 @@ When the location needs small runtime logic, the JSON points to an inline script
   "type": "location",
   "name": "Hooded merchant's booth",
   "biome": "market",
-  "description_template": "#inline:merchant_booth_script",
-  "options": [],
-  "state_keys": ["character.gold", "character.inventory", "this.examined_globe"],
+  "description_template": "The merchant tilts his head. {{rand() < 0.5 ? \"'Snowglobe today?' he asks.\" : \"'I'd offer you the snowglobe, but my prices are firm.'\"}}",
+  "options": [
+    { "label": "Inspect the snowglobe", "target": "#module:merchant_arc/open" },
+    { "label": "Walk away", "target": "market_square" }
+  ],
+  "state_keys": ["character.gold", "character.inventory"],
   "tags": ["has_chat"]
 }
 ```
 
-The `#inline:` prefix on `description_template` (or on any option's `target`) tells the runtime to invoke the inline script evaluator. Script itself is stored in an `inline_script` component attached to the same entity. See `03_INLINE_SCRIPT.md`.
+The `rand()` in the template is seeded and deterministic per player per location visit (see §"Template grammar"). The `#module:` target routes to the durable module `merchant_arc` at its `open` step (see `01_ARCHITECTURE.md` §"Path 2 — durable module" for the full state-machine shape).
+
+The `#inline:` prefix from the earlier three-paths design is gone — no separate inline-script interpreter to invoke. If you see `#inline:` anywhere in code, it's stale and wants removal.
 
 ## Validation gates
 
@@ -266,7 +283,7 @@ Every location JSON is validated at insert/update time:
 
 1. **Zod parse.** Schema mismatch → reject.
 2. **Template compile.** Template parses to AST successfully; all `{{vars}}` resolve to declared `state_keys`.
-3. **Option reachability.** All `target` references point to existing entities, declared `#inline:` scripts, or declared `#module:` methods. Unresolved → mark as stub pending expansion.
+3. **Option reachability.** All `target` references point to existing entities or declared `#module:<name>/<step>` handlers. Unresolved → mark as stub pending expansion. `#inline:` targets are rejected (deprecated).
 4. **Effect legality.** Each effect's `path` must be in one of the four scopes with valid shape.
 5. **Safety filter.** No self-targeted infinite loops (option target == current id without a state change); no recursion without a `done()`-equivalent.
 

@@ -1,28 +1,44 @@
-// Public queries for locations — slug-addressed reads with blob
-// dereferencing. Options + description_template arrive at the client
-// ready to render.
+// Location reads + applyOption mutation. Every call is world-scoped; the
+// client addresses by slug; the server resolves entity ids from the
+// caller's branch.
 
 import { query, mutation } from "./_generated/server.js";
 import { v } from "convex/values";
 import { readJSONBlob } from "./blobs.js";
+import { resolveMember } from "./sessions.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 async function readAuthoredPayload<T>(
-  ctx: { db: { query: Function; get: Function } },
+  ctx: any,
   entity: Doc<"entities">,
 ): Promise<T> {
-  const version = await (ctx.db.query("artifact_versions") as any)
+  const version = await ctx.db
+    .query("artifact_versions")
     .withIndex("by_artifact_version", (q: any) =>
-      q.eq("artifact_entity_id", entity._id).eq("version", entity.current_version),
+      q
+        .eq("artifact_entity_id", entity._id)
+        .eq("version", entity.current_version),
     )
     .first();
   if (!version) throw new Error(`no version for entity ${entity._id}`);
-  return readJSONBlob<T>(ctx as any, version.blob_hash);
+  return readJSONBlob<T>(ctx, version.blob_hash);
 }
 
-export const getLocationBySlug = query({
-  args: { branch_id: v.id("branches"), slug: v.string() },
-  handler: async (ctx, { branch_id, slug }) => {
+async function loadBranch(ctx: any, world_id: Id<"worlds">) {
+  const world = await ctx.db.get(world_id);
+  if (!world?.current_branch_id) throw new Error("world has no current branch");
+  return world.current_branch_id as Id<"branches">;
+}
+
+export const getBySlug = query({
+  args: {
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    slug: v.string(),
+  },
+  handler: async (ctx, { session_token, world_id, slug }) => {
+    await resolveMember(ctx, session_token, world_id);
+    const branch_id = await loadBranch(ctx, world_id);
     const entity = await ctx.db
       .query("entities")
       .withIndex("by_branch_type_slug", (q) =>
@@ -30,7 +46,7 @@ export const getLocationBySlug = query({
       )
       .first();
     if (!entity) return null;
-    const payload = await readAuthoredPayload<Record<string, unknown>>(ctx as any, entity);
+    const payload = await readAuthoredPayload<Record<string, unknown>>(ctx, entity);
     return {
       entity_id: entity._id,
       author_pseudonym: entity.author_pseudonym,
@@ -40,60 +56,57 @@ export const getLocationBySlug = query({
   },
 });
 
-export const getLocationByEntityId = query({
-  args: { entity_id: v.id("entities") },
-  handler: async (ctx, { entity_id }) => {
+/** Look up a location's slug from its entity id (for redirect after goto). */
+export const getSlugById = query({
+  args: {
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    entity_id: v.id("entities"),
+  },
+  handler: async (ctx, { session_token, world_id, entity_id }) => {
+    await resolveMember(ctx, session_token, world_id);
     const entity = await ctx.db.get(entity_id);
-    if (!entity || entity.type !== "location") return null;
-    const payload = await readAuthoredPayload<Record<string, unknown>>(ctx as any, entity);
-    return {
-      entity_id: entity._id,
-      author_pseudonym: entity.author_pseudonym,
-      version: entity.current_version,
-      ...payload,
-    };
+    if (!entity || entity.world_id !== world_id) return null;
+    return { slug: entity.slug };
   },
 });
 
-export const listLocations = query({
-  args: { branch_id: v.id("branches") },
-  handler: async (ctx, { branch_id }) => {
-    const entities = await ctx.db
-      .query("entities")
-      .withIndex("by_branch_type", (q) =>
-        q.eq("branch_id", branch_id).eq("type", "location"),
-      )
-      .collect();
-    return entities.map((e) => ({
-      entity_id: e._id,
-      slug: e.slug,
-      author_pseudonym: e.author_pseudonym,
-      updated_at: e.updated_at,
-    }));
-  },
-});
-
-/**
- * Apply an option effect. Wave-0 minimal — handles `goto`, `say`, `inc`,
- * `set` on `this.*` (per-player-per-location) state. Returns the new
- * location id when `goto` fires, or `null` otherwise.
- *
- * This is a sketch: `this.*` state is meant to be per-character-per-location
- * (spec/02 §Scoped state). For Wave 0 we park it under
- * `character.state.this.<location_slug>.<key>`. Good enough to prove the loop;
- * refactor when `location.*` (shared) and proper `this.*` scoping are needed.
- */
 export const applyOption = mutation({
   args: {
-    character_id: v.id("characters"),
-    location_entity_id: v.id("entities"),
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    location_slug: v.string(),
     option_index: v.number(),
   },
-  handler: async (ctx, { character_id, location_entity_id, option_index }) => {
-    const character = await ctx.db.get(character_id);
-    if (!character) throw new Error("character not found");
-    const locEntity = await ctx.db.get(location_entity_id);
-    if (!locEntity || locEntity.type !== "location") throw new Error("not a location");
+  handler: async (ctx, { session_token, world_id, location_slug, option_index }) => {
+    const { user_id } = await resolveMember(ctx, session_token, world_id);
+    const branch_id = await loadBranch(ctx, world_id);
+
+    const character = await ctx.db
+      .query("characters")
+      .withIndex("by_world_user", (q) =>
+        q.eq("world_id", world_id).eq("user_id", user_id),
+      )
+      .first();
+    if (!character) throw new Error("you have no character in this world");
+
+    const entity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q) =>
+        q
+          .eq("branch_id", branch_id)
+          .eq("type", "location")
+          .eq("slug", location_slug),
+      )
+      .first();
+    if (!entity) throw new Error(`location "${location_slug}" not found`);
+
+    // Server-enforced: character must currently be at this location, to
+    // prevent acting from anywhere.
+    if (character.current_location_id !== entity._id) {
+      throw new Error("character is not at this location");
+    }
+
     const payload = await readAuthoredPayload<{
       slug: string;
       options: Array<{
@@ -101,7 +114,8 @@ export const applyOption = mutation({
         target?: string;
         effect?: Array<{ kind: string; [k: string]: unknown }>;
       }>;
-    }>(ctx as any, locEntity);
+    }>(ctx, entity);
+
     const option = payload.options[option_index];
     if (!option) throw new Error(`option ${option_index} out of range`);
 
@@ -125,29 +139,31 @@ export const applyOption = mutation({
       }
     }
 
+    let newLocationSlug: string | null = null;
     let newLocationId: Id<"entities"> | null = null;
     if (gotoSlug) {
       const target = await ctx.db
         .query("entities")
         .withIndex("by_branch_type_slug", (q) =>
           q
-            .eq("branch_id", character.branch_id)
+            .eq("branch_id", branch_id)
             .eq("type", "location")
             .eq("slug", gotoSlug!),
         )
         .first();
       if (target) {
         newLocationId = target._id;
+        newLocationSlug = target.slug;
       }
     }
 
-    await ctx.db.patch(character_id, {
+    await ctx.db.patch(character._id, {
       state,
       current_location_id: newLocationId ?? character.current_location_id,
       updated_at: Date.now(),
     });
 
-    return { says, new_location_id: newLocationId };
+    return { says, new_location_slug: newLocationSlug };
   },
 });
 
@@ -166,7 +182,6 @@ function applyNumericMutation(
     const prev = Number((state as Record<string, unknown>)[key] ?? 0);
     (state as Record<string, unknown>)[key] = f(prev);
   }
-  // location.* and world.* scopes deferred to Wave 1.
 }
 
 function applyScalarMutation(

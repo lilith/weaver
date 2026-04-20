@@ -6,33 +6,38 @@
 </script>
 
 {#if data.user}
-	<section class="prose prose-stone mx-auto py-8">
-		<h1 class="font-serif text-4xl">Weaver</h1>
-		<p>You're signed in as <strong>{data.user.display_name}</strong>.</p>
-		<a
-			href="/play"
-			class="mt-6 inline-block rounded-lg bg-stone-900 px-5 py-3 text-white no-underline hover:bg-stone-700"
-		>
-			Enter the world
-		</a>
+	<section class="space-y-6 py-10">
+		<h1 class="font-display text-5xl text-ink-900">
+			Welcome back, <span class="font-hand text-4xl text-accent-600">{data.user.display_name}</span>.
+		</h1>
+		<p class="text-ink-700">Your worlds are waiting.</p>
+		<a href="/worlds" class="storybook-button no-underline">Go to your worlds</a>
 	</section>
 {:else}
-	<section class="mx-auto py-10 sm:py-16">
-		<h1 class="font-serif text-4xl tracking-tight sm:text-5xl">Weaver</h1>
-		<p class="mt-3 text-stone-600">
-			A small, collaborative world-building game. Sign in with your email to enter.
-		</p>
+	<section class="space-y-8 py-10 sm:py-16">
+		<header class="space-y-3">
+			<h1 class="font-display text-5xl tracking-tight text-ink-900 sm:text-6xl">
+				Weaver
+			</h1>
+			<p class="font-hand text-2xl text-accent-600">a small loom for stories, shared</p>
+			<p class="text-ink-700">
+				Each world is its own story, stitched from prose and pictures you author together. Sign in with
+				your email — you'll get a single-use link.
+			</p>
+		</header>
 
 		{#if form?.ok}
-			<div class="mt-8 rounded-lg border border-stone-200 bg-white p-4 text-sm text-stone-700">
-				A sign-in link has been sent to <strong>{form.email}</strong>. Check your inbox. The link
-				expires in 15 minutes.
+			<div class="story-card px-5 py-4">
+				<p class="text-ink-700">
+					<span class="font-hand text-xl text-accent-600">sent.</span> Check <strong>{form.email}</strong>
+					— link expires in 15 minutes.
+				</p>
 			</div>
 		{:else}
 			<form
 				method="POST"
 				action="?/request"
-				class="mt-8 space-y-3"
+				class="story-card space-y-3 px-5 py-5"
 				use:enhance={() => {
 					submitting = true;
 					return async ({ update }) => {
@@ -41,25 +46,23 @@
 					};
 				}}
 			>
-				<label class="block text-sm font-medium" for="email">Email address</label>
-				<input
-					id="email"
-					name="email"
-					type="email"
-					required
-					autocomplete="email"
-					class="w-full rounded-lg border border-stone-300 bg-white px-4 py-3 text-base placeholder:text-stone-400 focus:border-stone-500 focus:outline-none"
-					placeholder="you@example.com"
-				/>
+				<label class="block space-y-1.5">
+					<span class="text-sm text-ink-700">your email</span>
+					<input
+						id="email"
+						name="email"
+						type="email"
+						required
+						autocomplete="email"
+						class="storybook-input w-full"
+						placeholder="you@example.com"
+					/>
+				</label>
 				{#if form?.error}
-					<p class="text-sm text-red-600">{form.error}</p>
+					<p class="text-sm text-red-700">{form.error}</p>
 				{/if}
-				<button
-					type="submit"
-					disabled={submitting}
-					class="min-h-11 w-full rounded-lg bg-stone-900 px-5 py-3 text-base font-medium text-white disabled:opacity-50 sm:w-auto"
-				>
-					{submitting ? 'Sending…' : 'Send sign-in link'}
+				<button class="storybook-button w-full sm:w-auto" disabled={submitting}>
+					{submitting ? 'sending…' : 'send me a sign-in link'}
 				</button>
 			</form>
 		{/if}

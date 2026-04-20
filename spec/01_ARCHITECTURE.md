@@ -1,29 +1,30 @@
 # Weaver — Architecture
 
-## Three execution paths, one store
+## Two execution paths, one store
 
-Every location, NPC, and encounter is rendered by one of three paths. The runtime detects which on load and dispatches.
+Every location, NPC, and encounter is rendered by one of two paths. The runtime detects which on load and dispatches.
 
 ```
-┌─────────────────────┐
-│  Pure JSON location │ ← 95% of content. Template render. No runtime.
-└─────────────────────┘
+┌─────────────────────────────────────────┐
+│  JSON with safe inline expressions      │ ← most content. Template render + a
+│  (description_template, options,        │   small bounded expression evaluator
+│   predicates, effects)                  │   for conditionals, RNG flavor, and
+└─────────────────────────────────────────┘   per-player {{...}} shorthand.
            │
            ▼
-┌─────────────────────┐
-│   Inline script     │ ← 4%. Tiny interpreter. Pure function.
-└─────────────────────┘
-           │
-           ▼
-┌─────────────────────┐
-│   Durable module    │ ← 1%. Event-sourced workflow. Capability-sandboxed.
-└─────────────────────┘
+┌─────────────────────────────────────────┐
+│  Durable module (state machine)         │ ← anything stateful across turns,
+│  steps: { [id]: (ctx, state) =>         │   anything that subscribes to world
+│    ({ next, effects }) }                │   events, anything genuinely complex.
+└─────────────────────────────────────────┘
            │
            ▼
      entities / components / relations store (Convex)
 ```
 
 The store is common. What differs is how behavior reaches the store.
+
+The earlier three-path split (JSON / inline script / module with a custom script grammar as Path 2) is dropped; the "Path 2" use-cases — conditional prose, random flavor, tiny per-player state tweaks — are served by safe inline expressions inside the JSON template grammar (see `02_LOCATION_SCHEMA.md` §"Template grammar"). `03_INLINE_SCRIPT.md` is marked deprecated.
 
 ## Blob storage (foundational)
 
@@ -115,80 +116,114 @@ A location with no behavior beyond rendering, offering options, and updating sim
 
 **Author experience:** browser form designer or AI generates JSON directly. AI generations validated against Zod schema before insert.
 
-## Path 2 — inline script
-
-Used when templating isn't enough (conditional branches, random encounters, small stateful logic). See `03_INLINE_SCRIPT.md` for the grammar.
-
-```
-p "You approach the merchant's stall."
-
-if not character.inventory.has("snowglobe") then
-  p "He smiles knowingly."
-  choose {
-    "Examine the snowglobe": examine_globe,
-    "Ignore him": leave
-  }
-else
-  p "The merchant nods, recognizing the globe."
-  goto "merchant_dialogue_post_globe"
-end
-```
-
-**Render path:** read entity → read `inline_script` component → evaluate interpreter against current state → produce (text, options, effects). Pure function, fully replayable, fully testable as unit fixtures.
-
-**Runtime:** TypeScript interpreter, ~300 LOC, no `eval`, no `Function`, no prototype access. Executes server-side in a Convex query or mutation.
-
-## Path 3 — durable module
+## Path 2 — durable module
 
 Used when something genuinely needs persistent state across multiple visits with branching logic, or needs to subscribe to cross-world events. Examples: a multi-stage quest, a persistent NPC with memory, combat.
 
 ```ts
 // modules/merchant_arc/flow.ts
-export async function* merchantArc(ctx: FlowCtx) {
-  yield p`The cloaked merchant watches you approach.`
-
-  const choice = yield choose({
-    inspect: "Inspect the snowglobe",
-    leave: "Walk away",
-  })
-
-  if (choice === "leave") return
-
-  yield p`He holds it out. "500 coins."`
-  if (ctx.character.gold < 500) {
-    yield p`You realize you can't afford it.`
-    return
-  }
-
-  const pay = yield choose({ pay: "Pay", decline: "Decline" })
-  if (pay !== "pay") return
-
-  yield mutate({ inc: ["character.gold", -500] })
-  yield mutate({ add_item: ["snowglobe"] })
-  yield p`The snowglobe is yours. The merchant's grin widens.`
-  yield gotoFlow("ice_realm.chasm.snowdunes")
+export const merchantArc: ModuleDef = {
+  name: "merchant_arc",
+  schema_version: 1,
+  manifest: { reads: [...], writes: [...], emits: [...] },
+  steps: {
+    open: async (ctx, state) => {
+      ctx.say("The cloaked merchant watches you approach.")
+      return {
+        next: "choose_action",
+        ui: { choices: [
+          { id: "inspect", label: "Inspect the snowglobe" },
+          { id: "leave",   label: "Walk away" },
+        ]},
+      }
+    },
+    choose_action: async (ctx, state, input) => {
+      if (input.choice === "leave") return { next: "done" }
+      return { next: "price_check" }
+    },
+    price_check: async (ctx, state) => {
+      ctx.say('He holds it out. "500 coins."')
+      if (ctx.character.gold < 500) {
+        ctx.say("You realize you can't afford it.")
+        return { next: "done" }
+      }
+      return { next: "confirm_pay" }
+    },
+    confirm_pay: async (ctx, state, input) => {
+      if (input.choice !== "pay") return { next: "done" }
+      return {
+        next: "done",
+        effects: [
+          { kind: "inc", path: "character.gold", by: -500 },
+          { kind: "give_item", item_id: "snowglobe" },
+        ],
+      }
+    },
+    done: { terminal: true },
+  },
 }
 ```
 
-**Runtime:** generator function compiled to event log. Each `yield` records (op, args). Replay re-runs the generator against the log to resume. Crash-safe. Deploy-safe (version-pinned). See `01_ARCHITECTURE.md` §Durable runtime.
+**Runtime:** step-keyed state machine, not generator replay. A flow row stores `{module_name, schema_version, current_step_id, state_blob_hash, status}`. Resume is: look up handler for `current_step_id`, call with loaded state + any waiting input, apply returned effects, update `current_step_id`, persist. Crash-safe (state is on disk after every transition). Deploy-safe (version-pinned — §"Version pinning and escape handlers"). See §"Durable runtime" below.
 
-**Capability sandbox:** module manifest declares `reads`, `writes`, `publishes`, `emits`. Runtime hands module a proxy that only permits declared ops. Undeclared ops throw at the boundary.
+**Module context (`ModuleCtx`):** a typed proxy that declares the module's `reads`, `writes`, `emits`. Wave 1-3 modules are trusted TypeScript compiled into the server bundle; the proxy is a documentation + one-line-runtime-check pattern, not a sandbox isolate. The runtime check catches "module writes a component type it didn't declare" at the boundary (defense in depth for bugs, not security). User-authored modules in a real isolate is a Wave 4+ concern — see `ISOLATION_AND_SECURITY.md` §"Module isolation."
 
 ## Durable runtime — how it actually works
 
-Weaver's original coroutine persistence used Pluto. JS doesn't have that. The modern equivalent is **event-sourced generator replay**:
+Weaver's original coroutine persistence used Pluto. JS doesn't have that natively, and generator-based event-sourced replay (an earlier sketch of this section) is a Temporal-sized engineering commitment we don't need. The chosen shape is **step-keyed state machines**, which give us crash safety and deploy safety without the replay semantics' landmines (closure capture, non-deterministic built-ins, side effects on the "should never happen" path).
 
-1. Flow is a plain generator function `function* flow(ctx) { ... }`.
-2. Each `yield` produces an **op**: `{kind: "p" | "choose" | "mutate" | "call_ai" | "gen_art" | "goto", args, seed}`.
-3. The runtime consumes the op, performs the side effect, and records `(op, result)` to an append-only `events` table.
-4. To resume after crash/reload: re-run the generator from the top, comparing each new yield against the recorded log. If log has a result, feed it back in. When log is exhausted, wait for new input (user choice, AI response, etc.).
-5. Determinism: ops carry seeds derived from `(world_id, turn, flow_id, op_index)`. RNG and AI calls cache by seed. Same inputs → same outputs, every time.
+### The shape
 
-This gives:
-- Crash recovery: resume exactly where you were.
-- Deploy safety: old flows carry version tag; runtime keeps old handlers loaded until their events complete.
-- Time travel: replay any suffix of the log.
-- Test determinism: replay corpus is just recorded event logs.
+A **module** is a plain TypeScript object:
+
+```ts
+type ModuleDef = {
+  name: string
+  schema_version: number
+  manifest: { reads: string[], writes: string[], emits: string[] }
+  steps: Record<StepId, StepHandler | TerminalStep>
+}
+
+type StepHandler = (ctx: ModuleCtx, state: ModuleState, input?: StepInput) => Promise<StepResult>
+
+type StepResult = {
+  next: StepId                // where to resume next
+  state?: ModuleState          // updated state (blob-hashed if large)
+  effects?: Effect[]           // mutations + UI + AI calls to apply
+  ui?: { choices?: Choice[], narration?: string }  // shown to the player; step becomes waiting
+}
+
+type TerminalStep = { terminal: true }
+```
+
+### Lifecycle
+
+1. **Start.** A trigger (`start_combat`, `arrive_location` with a `#module:` target, a module's own `emit` → another module's subscription, etc.) inserts a `flows` row with `current_step_id: "start"` (or whatever the module defines as entrypoint) and empty state.
+2. **Step dispatch.** Runtime reads the flow row, looks up `module.steps[current_step_id]`, calls it with `ctx`, loaded state, and any waiting input. The handler returns `{ next, state?, effects?, ui? }`.
+3. **Apply effects.** Runtime applies mutations, enqueues AI calls, appends to the narrative. Each effect has its own deterministic seed derived from `(flow_id, step_id, effect_index)` so regenerating after a crash produces the same output.
+4. **Persist.** Updates flow row: `current_step_id = next`, `state_blob_hash = hash(state)` (if state changed). Writes a `flow_transitions` row with `{step_from, step_to, effects}` for audit + debugging.
+5. **Suspend or continue.** If the step returned `ui:` (presented choices or awaiting free-text), status becomes `waiting`; the flow is parked until the user responds. Otherwise the runtime immediately dispatches the next step.
+6. **Terminal.** A step marked `{ terminal: true }` sets the flow's status to `completed`. No further dispatch.
+
+### Why this over generator-replay
+
+- **Debugging.** Stepping through a state machine is stepping through named functions; stepping through a generator-replay is stepping through a re-run of an earlier execution against a log, which is harder to reason about.
+- **Migration.** A new module version can ship a `migrate: (old_state, from_version) => new_state` function; no replay-equivalence concerns.
+- **Determinism scope.** Non-determinism inside a step (wall-clock, Math.random) is fine — the step is called once per transition, and its effects go through the ctx proxy which stamps seeds. The earlier generator-replay model required everything inside the generator to be deterministic under re-execution, which is a nightmare to audit.
+- **Escape is simpler.** If a version-pinned handler has been GC'd, the escape handler runs in place of the missing step — no "fast-forward through the log to find the last good state" dance.
+
+### What we give up
+
+- **Time travel through intra-step execution** — we can replay step transitions from `flow_transitions` but not the inside of a step. Fine: the step is a black box whose effect on the world is captured by its emitted effects.
+- **"Re-run the whole flow" as a test primitive** — replaced by "replay the transition log": call each step in order with its recorded input, assert effects match. Still deterministic, easier to debug.
+
+### Crash recovery
+
+On process restart, all `flows` rows with status `running` are re-dispatched from their `current_step_id` with their stored state. If a step was mid-effect (partial mutations applied), the effects are idempotent by design (seeded writes, blob-hash-addressed content creation) so the re-run converges to the same result. Effects that are inherently non-idempotent (e.g., send_email) are marked so and moved to a "send-once-and-record" pattern.
+
+### Determinism, RNG, and AI caching
+
+RNG is still a pure function of seed parts: `rng(flow_id, step_id, effect_label, branch_id, world_id)`. AI calls are still cached by `(prompt_hash, seed, model_version, world_id, branch_id)` — the world/branch keys are from `ISOLATION_AND_SECURITY.md` rule 5. Cache is authoritative in test mode. Resume after crash hits the cache if the seed matches the prior run.
 
 ## Version pinning and escape handlers
 
@@ -210,57 +245,69 @@ Each module ships an `escape_handler` as part of its manifest. Typical escape: w
 
 GC policy: drop version handlers after 30 days of no active references. Log a warning at 20 days to allow manual intervention.
 
-## Capability sandbox
+## Module context — typed proxy (Wave 1-3)
 
-Modules never access Convex directly. They receive a `ModuleCtx` proxy:
+Modules don't access Convex directly. They receive a `ModuleCtx` proxy scoped to the calling flow's `world_id` / `branch_id`:
 
 ```ts
 interface ModuleCtx {
+  world_id: Id<"worlds">        // const — cannot be overridden by the module
+  branch_id: Id<"branches">
+  character: Readonly<Character>
+
   read: {
-    entity: (id: string) => Promise<Entity | null>,
-    component: <T>(entity_id: string, type: string) => Promise<T | null>,
-    relation: (subject: string, predicate: string) => Promise<Relation[]>,
-  },
+    entity: (id: Id<"entities">) => Promise<Entity | null>
+    component: <T>(entity_id: Id<"entities">, type: string) => Promise<T | null>
+    relation: (subject: Id<"entities">, predicate: string) => Promise<Relation[]>
+  }
   write: {
-    mutate: (mutations: Mutation[]) => Promise<void>,
-    emit: (event_type: string, payload: unknown) => Promise<void>,
-  },
+    mutate: (mutations: Mutation[]) => Promise<void>
+    emit: (event_type: string, payload: unknown) => Promise<void>
+  }
   ai: {
-    classify: (text: string, schema: ZodSchema) => Promise<unknown>,
-    narrate: (prompt: string) => Promise<string>,
-    gen_image: (prompt: string, refs: string[]) => Promise<string>,
-  },
-  rng: (label: string) => number,  // deterministic, seeded
-  now: () => number,                // deterministic in replay
-  log: (msg: string) => void,
+    classify: (text: string, schema: ZodSchema) => Promise<unknown>
+    narrate: (prompt: string) => Promise<string>
+    gen_image: (prompt: string, refs: Id<"entities">[]) => Promise<Id<"entities">>   // returns ref entity id
+  }
+  rng: (label: string) => number
+  now: () => number
+  log: (msg: string) => void
+  say: (text: string) => void                                                        // convenience — appends narration
 }
 ```
 
-The manifest declares the subset of reads/writes/component-types/predicates the module will use. The proxy blocks anything not in the declared set — at the TS-type level via branded types (compile-time) and at the runtime level via permission checks (runtime).
+The module's manifest declares which component types it reads and writes, which events it emits, and which predicates it manipulates. The proxy enforces the declaration:
 
-Module execution happens inside a QuickJS WASM isolate (optional, for user-authored modules) or trusted V8 (for vetted modules). Limits: 50ms wall-clock, 10MB memory, no network, no I/O beyond the proxy.
+- **Compile-time:** typed via branded component-type strings; `writes` not declared in the manifest won't type-check.
+- **Runtime:** one check per boundary call. Cheap, defense-in-depth for bugs, not a security isolate.
 
-## Cross-cutting hooks (`.always.` — future)
+**Wave 1-3 modules are trusted TypeScript** compiled into the server bundle. There is no QuickJS WASM isolate, no runtime capability boundary beyond the proxy check. The proxy pattern survives because it documents module surface (manifest) and catches bugs that would silently access data the module shouldn't — not because we need to protect against hostile module code.
 
-The original `weaver-lua` had an `.always.` convention: named code blocks that run on every turn, regardless of which location or flow the player is in. Typical uses: weather progression, time-of-day advance, resource regen (energy, hunger), ambient NPC state updates, chronicle tick.
+**Wave 4+** (user-authored modules, if ever): a real isolate becomes mandatory. Constraints proposed at that time will be something like: QuickJS WASM, 50ms wall-clock, 10MB memory, no network, no I/O beyond the proxy, no `eval` / `Function` / dynamic import. Those numbers are unverified — see `FEASIBILITY_REVIEW.md` §4 "QuickJS WASM isolate cold-start." Respec this section when the feature lands.
 
-Wave 1 and Wave 2 **don't ship this**. They ship single-subscription hooks at module level (`arrive_location`, `new_day`, `idle_player`, etc.) — which cover 80% of what `.always.` blocks were used for in the original. True always-on cross-cutting code is a Wave 3 concern, and the design should land *before* the Wave 2 module system is frozen so the module manifest can declare `always` subscriptions cleanly.
+Isolation rules that apply today (trusted modules) are in `ISOLATION_AND_SECURITY.md` §"Module isolation" — ctx is bound to the flow's world/branch, manifest declarations are enforced, and modules cannot touch auth/cost-ledger/audit-log no matter what their manifest says.
 
-Rough shape to aim for when it's time:
+## Multi-player sync — at-transition, plus reactive chat
 
-- A module's manifest can declare `always: { tick, every: "turn" | "minute" | "day" }`.
-- The runtime maintains a registry of always-handlers per (world, branch), compiled once.
-- Each turn, the runtime executes all subscribed `always` handlers in declared order, inside the same capability-sandbox proxy as normal module code.
-- `always` handlers are not allowed to produce narrative (no `yield p`); they mutate world-scope state only. Any narrative they want surfaced goes through a named event the location layer can consume.
-- Execution budget per tick across all `always` handlers combined: <5ms for trusted, <20ms for user-authored. Exceeding the budget logs and skips (fail-open, not fail-closed — never block a turn).
+Multiple players can occupy the same world (and, in Wave 2+, the same location). The sync model is deliberately simple:
 
-Note: fail-open is a deliberate choice. An `.always.` bug should never brick gameplay. Drop a tick, log it, move on; users file a bug report.
+- **Durable character state** — inventory, HP, gold, relationships, position, energy — syncs at **location-entry and location-exit** only. Two players at the same location don't see each other's `this.*`-scoped state updates in real time. If Mara drinks from the spring and gains `character.rested`, Jason (also at the spring) sees that on his next transition, not mid-turn.
+- **Location-scoped shared state** (`location.*`) — fire lit, door opened, chest taken — syncs immediately on mutation via Convex's reactive queries. This is the coordination primitive.
+- **Chat** — fully reactive via `chat_messages` subscription. Real-time, because conversation is the part where real-time actually matters.
+- **Presence panel** — "where is everyone" — updates on transitions, not continuously. The panel subscribes to `characters.current_location_id` with a throttled view.
 
-Flag this in `08_WAVE_1_DISPATCH.md` as a known non-Wave-1 concern, and in the module-interface design when that spec lands, so the manifest format has room for `always` without a breaking revision later.
+Why at-transition rather than continuous: intra-location state updates are numerous, low-stakes, and often personal-scoped (`this.stump_examined` is about you, not Jason). Making them reactive costs Convex mutation contention, UI flicker, and a coordination-semantics design problem that has no clean answer (who goes first when two players tap the same option?). At-transition sync keeps the game turn-based-like at each player's own pace while making chat feel live.
+
+What this gives up:
+- Two players simultaneously examining the same object don't see each other do it.
+- Combat with two players can't be "same turn" in UI; it's either hardcoded-solo (Wave 1) or a module that externalizes turn-order explicitly (Wave 2+).
+- Optimistic "I saw Mara take the torch, let me take the thing beside it" doesn't render until the next transition.
+
+Worth it for Wave 1. Revisit if playtest shows the family feels disconnected.
 
 ## Flow stack (Weaver inheritance)
 
-Flows nest. When a module calls `yield gotoFlow("merchant_arc")`, the current flow pushes onto a stack. When the child flow completes (`done()`), control returns to the parent. Operations:
+Flows nest. When a step handler returns `{ next: gotoFlow("merchant_arc") }`, the current flow pushes onto a stack. When the child flow completes (its terminal step is reached, or an explicit `done()` is returned), control returns to the parent's next step. Operations:
 
 | Op | Semantics |
 |---|---|
@@ -339,14 +386,16 @@ Expand/contract pattern for breaking changes:
 
 Each step is its own deploy, each deploy is a transaction.
 
-## Determinism, RNG, and AI caching
+## Determinism, RNG, and AI caching (system-wide)
 
-- RNG is a pure function: `rng(seed_parts) → number in [0,1)`. Seed parts: `(world_id, turn, flow_id, op_index, label)`.
-- AI calls are cached by `(prompt_hash, seed, model_version)`. Cache backed by Convex storage.
-- Test mode treats the cache as authoritative: same input, always same output.
-- Replay reads the event log's recorded result; no new AI call unless log is empty for that op.
+The durable-runtime section covers determinism inside flows. The broader rules, applying to every Convex action including the expansion loop and the art worker:
 
-This makes the testing trinity cheap: state-space crawler explores thousands of paths without re-paying for AI; screenshot eval replays deterministic states; replay corpus is exact.
+- **RNG** is a pure function: `rng(seed_parts) → number in [0,1)`. Seed parts for flow-owned RNG: `(world_id, branch_id, flow_id, step_id, effect_label)`. For non-flow RNG (e.g., expansion loop picking a fallback biome): `(world_id, branch_id, turn_id, caller_label)`. Never derive a seed from wall-clock.
+- **AI calls cached** by `(model, canonicalized_prompt_hash, seed, world_id, branch_id)` per `ISOLATION_AND_SECURITY.md` rule 5. Cache backed by Convex storage. Test mode treats the cache as authoritative.
+- **Non-deterministic built-ins** (`Math.random`, `Date.now`, network calls) are not forbidden in handler code, but their results go through the proxied `ctx.rng` / `ctx.now` / `ctx.ai` surfaces so they can be stamped with seeds and cached.
+- **Resume after crash** reads persisted state + transition log; step handlers re-execute with the same seeds and hit the same cache entries, converging to the same output.
+
+This makes the testing trinity cheap: the state-space crawler explores thousands of paths without re-paying for AI; the replay test primitive reruns transition logs deterministically.
 
 ## PWA + offline
 

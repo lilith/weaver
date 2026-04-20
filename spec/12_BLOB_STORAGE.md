@@ -86,10 +86,12 @@ blobs: defineTable({
   inline_bytes: v.optional(v.bytes()),     // populated when storage === "inline"
   r2_key: v.optional(v.string()),          // populated when storage === "r2"
   first_referenced_at: v.number(),
-  last_referenced_at: v.number(),
-  ref_count: v.number(),                   // incremented/decremented atomically on ref changes
+  last_marked_reachable_at: v.optional(v.number()),   // updated by the mark-sweep GC pass; unset blobs past grace age are swept
 }).index("by_hash", ["hash"])
+  .index("by_marked", ["last_marked_reachable_at"])
 ```
+
+Note: earlier drafts used a `ref_count` column with increment/decrement on every heads change. Replaced by mark-sweep (§"Garbage collection") — refcount under concurrent mutations is a race-condition farm, and mark-sweep is simpler and provably correct.
 
 `hash` is the primary lookup. The `by_hash` index makes exists-check O(1).
 
@@ -120,13 +122,7 @@ export async function writeBlob(
 ): Promise<string> {
   const hash = bytesToHex(blake3(bytes))
   const existing = await ctx.db.query("blobs").withIndex("by_hash", q => q.eq("hash", hash)).first()
-  if (existing) {
-    await ctx.db.patch(existing._id, {
-      last_referenced_at: Date.now(),
-      ref_count: existing.ref_count + 1,
-    })
-    return hash
-  }
+  if (existing) return hash    // already stored; heads will reference it
 
   const storage = bytes.byteLength < 4096 ? "inline" : "r2"
   if (storage === "r2") {
@@ -141,14 +137,12 @@ export async function writeBlob(
     inline_bytes: storage === "inline" ? bytes : undefined,
     r2_key: storage === "r2" ? `blob/${hash.slice(0,2)}/${hash.slice(2,4)}/${hash}` : undefined,
     first_referenced_at: Date.now(),
-    last_referenced_at: Date.now(),
-    ref_count: 1,
   })
   return hash
 }
 ```
 
-**Idempotency:** writing the same content twice is a no-op (just increments ref_count). Writes are safe to retry.
+**Idempotency:** writing the same content twice is a no-op (the second write sees an existing row and returns the hash). Writes are safe to retry.
 
 **Atomicity:** R2 upload happens before Convex insert, so a crash between them leaves an unreferenced R2 object (harmless, reclaimable by GC). Convex mutation is atomic — either blob row commits or it doesn't.
 
@@ -274,21 +268,73 @@ Or, since entity heads + artifact_versions are both preserved: query `artifact_v
 
 Already covered in `11_PROMPT_EDITING.md`. "Restore version N" is a single mutation updating `entity.current_version = N`. Even cleaner with blobs: no data movement, just pointer update.
 
-## Garbage collection
+## Garbage collection — mark-sweep
 
-**Default policy: never delete.** A family's world is precious and storage is cheap. A fully-played 5-year world is probably under 5 GB. R2 at $0.015/GB-month = $0.075/month. Keep everything, forever.
+**Default policy: never delete.** A family's world is precious, storage is cheap. A fully-played 5-year world is probably under 5 GB. R2 at $0.015/GB-month = $0.075/month. Keep everything, forever.
 
-**Optional: reference-count GC for aggressive cost control.**
+**Optional: mark-sweep GC for aggressive cost control.**
 
-A blob is *unreferenced* when:
-- `ref_count` reaches 0, AND
-- no `artifact_versions` row references it, AND
-- no `components` row references it, AND
-- no `events` row's result references it (events log includes blob hashes for AI responses so they can be re-deduped).
+Reference counting across concurrent mutations is famously hard — two mutations that both add a new reference and delete an old one can race and leave either orphan blobs (leak) or zero-ref blobs with live pointers (corruption). Mark-sweep avoids the race entirely: snapshot of live heads at a point in time, walk it, mark reachable blobs, sweep unreachable blobs older than a grace window.
 
-A monthly scheduled action scans for unreferenced blobs older than 30 days and deletes them. Default: **disabled**. Enable only when storage cost becomes a concern, which for family worlds it won't.
+### Mark phase (scheduled job, daily)
 
-Public-world deployments with thousands of users might enable it with a 6-month retention window for edit history. Even then, character and location heads are never eligible because the entity always references its current version.
+```ts
+// convex/scheduled/markReachableBlobs.ts
+export const markReachableBlobs = action(async (ctx) => {
+  const now = Date.now()
+
+  // Walk every heads-level table that references blobs.
+  // artifact_versions.blob_hash, components.blob_hash, flows.state_blob_hash,
+  // flow_transitions.state_blob_hash, mentorship_log.before/after_blob_hash,
+  // art_queue.result_blob_hash.
+  for (const row of await ctx.db.query("artifact_versions").collect()) {
+    await markBlob(ctx, row.blob_hash, now)
+  }
+  for (const row of await ctx.db.query("components").filter(q => q.neq(q.field("blob_hash"), undefined)).collect()) {
+    await markBlob(ctx, row.blob_hash!, now)
+  }
+  // ... one pass per referencing table ...
+})
+
+async function markBlob(ctx, hash, now) {
+  const row = await ctx.db.query("blobs").withIndex("by_hash", q => q.eq("hash", hash)).first()
+  if (row) await ctx.db.patch(row._id, { last_marked_reachable_at: now })
+}
+```
+
+The mark phase is read-mostly and idempotent. Safe to re-run.
+
+### Sweep phase (scheduled job, weekly, gated)
+
+```ts
+// convex/scheduled/sweepUnreachableBlobs.ts — DISABLED by default
+export const sweepUnreachableBlobs = action(async (ctx) => {
+  const grace_ms = 7 * 24 * 60 * 60 * 1000   // 7-day grace window
+  const cutoff = Date.now() - grace_ms
+  const unreachable = await ctx.db.query("blobs")
+    .withIndex("by_marked", q => q.lt("last_marked_reachable_at", cutoff))
+    .collect()
+  for (const row of unreachable) {
+    // Safety: only delete if older than grace AND not marked in the latest mark pass
+    if ((row.last_marked_reachable_at ?? 0) > cutoff) continue
+    if (row.storage === "r2") await deleteFromR2(row.r2_key!)
+    await ctx.db.delete(row._id)
+  }
+})
+```
+
+**Default: disabled.** A family's world is small enough that storage cost is negligible. Enable only if storage grows enough to matter. When enabled, run the mark phase daily and the sweep phase weekly; the 7-day grace window combined with the mark-daily cadence gives a safety buffer against accidental data loss.
+
+### Why mark-sweep over refcount
+
+- Concurrent mutations can't corrupt the state — the mark phase is a single consistent read-pass.
+- No rollback-hooks needed when a mutation fails mid-way (refcount requires careful decrement-on-rollback).
+- New referencing tables are trivial to add: add them to the mark pass, done. Refcount requires plumbing every insert/delete site.
+- Forks don't need to touch blob rows — blobs are "pointed at by heads" and mark-sweep discovers those pointers on the next pass.
+
+### What mark-sweep cost to run
+
+For a family world with ~10K locations, ~10K images, ~5K artifact versions: ~25K blob-pointing rows to walk per mark pass. Convex can stream this in a few seconds. Daily. Negligible.
 
 ## Migrating existing data
 
@@ -322,7 +368,8 @@ The following docs need amendments when integrated:
 
 - **Unit:** canonicalization is deterministic; hash is stable across runs; write is idempotent; read returns identical bytes to input.
 - **Property:** for any JSON object, canonicalize(parse(canonicalize(x))) === canonicalize(x). For any sequence of writes and reads, bytes out == bytes in.
-- **Integration:** write 1000 duplicate blobs → exactly 1 row, ref_count = 1000.
+- **Integration:** write 1000 duplicate blobs → exactly 1 row (subsequent writes return the existing hash without inserting).
+- **GC correctness:** write a blob, reference it from an entity, run mark; unreference the entity, run mark + sweep after grace; blob is deleted. And the reverse: write a blob, leave it referenced, run mark+sweep; blob is not deleted even across many cycles.
 - **Crash simulation:** kill process between R2 upload and Convex insert; verify no corruption, orphan R2 objects are reclaimable by GC.
 - **Migration:** v1_inline_to_blobs migration on a seeded Wave 0 snapshot produces identical read results before and after.
 

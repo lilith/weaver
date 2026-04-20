@@ -170,7 +170,8 @@ export default defineSchema({
     .index("by_user_world", ["user_id", "world_id"])
     .index("by_branch", ["branch_id"]),
 
-  // Content-addressed blob store (see 12_BLOB_STORAGE.md)
+  // Content-addressed blob store (see 12_BLOB_STORAGE.md). Global — no world_id.
+  // GC is mark-sweep (periodic walk of live heads), not refcount-driven.
   blobs: defineTable({
     hash: v.string(),                       // BLAKE3 hex (32-byte truncation)
     size: v.number(),                       // bytes
@@ -178,11 +179,40 @@ export default defineSchema({
     storage: v.union(v.literal("inline"), v.literal("r2")),
     inline_bytes: v.optional(v.bytes()),    // present iff storage=inline (≤4KB)
     r2_key: v.optional(v.string()),         // present iff storage=r2
-    refcount: v.number(),                   // heads pointing at this blob; 0 = GC eligible
     created_at: v.number(),
+    last_marked_reachable_at: v.optional(v.number()),  // updated by mark phase; unset blobs past grace age are swept
   })
     .index("by_hash", ["hash"])
-    .index("by_refcount", ["refcount"]),
+    .index("by_marked", ["last_marked_reachable_at"]),
+
+  // Per-world permission; see ISOLATION_AND_SECURITY.md rule 2.
+  world_memberships: defineTable({
+    user_id: v.id("users"),
+    world_id: v.id("worlds"),
+    role: v.union(
+      v.literal("owner"),
+      v.literal("family_mod"),
+      v.literal("player"),
+      v.literal("guardian"),
+    ),
+    added_by: v.id("users"),
+    added_at: v.number(),
+    revoked_at: v.optional(v.number()),     // soft-delete for audit; never hard-delete
+  })
+    .index("by_user_world", ["user_id", "world_id"])
+    .index("by_world_role", ["world_id", "role"]),
+
+  // Append-only audit of auth-sensitive actions; see ISOLATION_AND_SECURITY.md rule 19.
+  audit_log: defineTable({
+    world_id: v.optional(v.id("worlds")),
+    actor_user_id: v.id("users"),
+    action: v.string(),                     // "invite" | "role_grant" | "role_revoke" | "rating_change" | "debug_session" | "data_export" | "data_delete"
+    target: v.any(),
+    note: v.optional(v.string()),
+    created_at: v.number(),
+  })
+    .index("by_world_time", ["world_id", "created_at"])
+    .index("by_actor_time", ["actor_user_id", "created_at"]),
 
   // The core entity-component-relation store
   entities: defineTable({
@@ -225,6 +255,7 @@ export default defineSchema({
   // Async art generation
   art_queue: defineTable({
     entity_id: v.id("entities"),
+    world_id: v.id("worlds"),             // for isolation scoping and budget attribution
     prompt: v.string(),
     refs: v.array(v.id("entities")),
     status: v.union(
@@ -234,35 +265,52 @@ export default defineSchema({
       v.literal("failed"),
     ),
     attempts: v.number(),
-    result_url: v.optional(v.string()),
+    result_blob_hash: v.optional(v.string()),   // BLAKE3 hex of the resulting image blob
     error: v.optional(v.string()),
     created_at: v.number(),
     updated_at: v.number(),
   })
     .index("by_status", ["status", "created_at"])
+    .index("by_world_status", ["world_id", "status"])
     .index("by_entity", ["entity_id"]),
 
-  // Durable flow runtime
+  // Durable flows — step-keyed state machines. A module is { steps: { [id]: (ctx, state) => ({ next, effects }) } };
+  // runtime stores current_step_id + state; resume is a handler lookup, not generator replay.
+  // See 01_ARCHITECTURE.md §"Durable runtime" and the durable-runtime rewrite in that doc.
   flows: defineTable({
     module_name: v.string(),
     schema_version: v.number(),
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
     character_id: v.id("characters"),
-    state: v.union(v.literal("running"), v.literal("waiting"), v.literal("completed"), v.literal("escaped")),
-    stack_depth: v.number(),
+    current_step_id: v.string(),          // name of the step handler to resume at
+    state_blob_hash: v.optional(v.string()),  // the flow's state, stored as a blob for size + dedup
+    status: v.union(
+      v.literal("running"),
+      v.literal("waiting"),
+      v.literal("completed"),
+      v.literal("escaped"),
+    ),
     parent_flow_id: v.optional(v.id("flows")),
-    throwaway: v.boolean(),  // dream flows
+    stack_depth: v.number(),
+    throwaway: v.boolean(),                // dream flows
     created_at: v.number(),
     updated_at: v.number(),
-  }).index("by_character", ["character_id"]),
+  })
+    .index("by_world_character", ["world_id", "character_id"])
+    .index("by_branch", ["branch_id"])
+    .index("by_status", ["status", "updated_at"]),
 
-  events: defineTable({
+  // Append-only log of step transitions — for debugging, escape-handler diagnostics, and
+  // optional time-travel. NOT the replay substrate (state machines don't replay — they resume).
+  flow_transitions: defineTable({
     flow_id: v.id("flows"),
-    op_index: v.number(),
-    op: v.any(),      // { kind, args }
-    result: v.optional(v.any()),
-    seed: v.string(),
+    step_from: v.string(),
+    step_to: v.string(),
+    state_blob_hash: v.optional(v.string()),
+    effects: v.any(),                      // what the step produced (narration, mutations, AI calls)
     created_at: v.number(),
-  }).index("by_flow_index", ["flow_id", "op_index"]),
+  }).index("by_flow_time", ["flow_id", "created_at"]),
 
   // Chat
   chat_threads: defineTable({
@@ -280,20 +328,22 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_thread_time", ["thread_id", "created_at"]),
 
-  // Mentorship log (append-only)
+  // Mentorship log (append-only) — world-scoped since one user may play in multiple worlds
   mentorship_log: defineTable({
     user_id: v.id("users"),
+    world_id: v.id("worlds"),
+    branch_id: v.optional(v.id("branches")),
     scope: v.string(),          // "world_bible_edit" | "location_edit" | "rejection" | ...
     context: v.any(),
     ai_suggestion: v.optional(v.any()),
     human_action: v.any(),
-    before: v.optional(v.any()),
-    after: v.optional(v.any()),
+    before_blob_hash: v.optional(v.string()),   // snapshot of payload before edit, via blob store
+    after_blob_hash: v.optional(v.string()),
     note: v.optional(v.string()),
     created_at: v.number(),
   })
-    .index("by_user_time", ["user_id", "created_at"])
-    .index("by_scope_time", ["scope", "created_at"]),
+    .index("by_world_user_time", ["world_id", "user_id", "created_at"])
+    .index("by_world_scope_time", ["world_id", "scope", "created_at"]),
 
   // Cost ledger
   cost_ledger: defineTable({

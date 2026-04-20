@@ -10,7 +10,7 @@ The engine is text-adventure-first (p/choose/goto, LoGD-style chat, free-text ex
 
 1. **Durable state is sacred; transient state is disposable.** Identity, inventory, settlement structure, relationships, chronicle — never lost. Fights, dialogues, open scenes — version-pinned, escape-handled, force-resolvable on code changes.
 
-2. **Locations are not code by default.** Three execution paths exist: structured JSON (95% of content), inline scripts (4%), full modules (1%). Runtime picks the cheapest that handles the request.
+2. **Locations are not code by default.** Two execution paths exist: structured JSON with safe inline expressions (the majority of content — conditionals, RNG flavor, per-player state tweaks via `{{...}}` shorthand) and full modules (anything stateful across turns, anything that subscribes to world events, anything genuinely complex). Runtime picks the cheapest that handles the request. (Earlier drafts split this into three paths with a custom inline-script grammar as Path 2; that split is collapsed into a single JSON-plus-expressions path. See `spec/01_ARCHITECTURE.md` and `spec/03_INLINE_SCRIPT.md` for the deprecation note.)
 
 3. **The world bible is the source of truth for consistency.** Style anchor, character refs, biome anchors, tone, theme — all cached and passed to every generation call. AI creativity is maxed on prose, hard-constrained on facts.
 

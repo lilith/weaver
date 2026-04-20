@@ -1,11 +1,17 @@
-# Weaver — Inline Script
+# Weaver — Inline Script (DEPRECATED)
 
-## Purpose
+> **Status: DEPRECATED as of 2026-04-19.** The three-execution-paths split was collapsed to two: JSON-with-safe-inline-expressions + modules. See `01_ARCHITECTURE.md` §"Two execution paths, one store" and `00_OVERVIEW.md` principle #2.
+>
+> **Do not build a separate inline-script interpreter.** Do not ship the grammar below. The use cases described here are now served either by (a) inline expressions inside the template grammar of `02_LOCATION_SCHEMA.md` (for conditional prose, RNG flavor, small per-player state writes) or (b) a durable module (for anything truly stateful, multi-step, or cross-turn).
+>
+> This file is kept for historical reference and as the source of the use-cases list that informed the collapse. It is not authoritative for implementation.
+
+## (Historical) Purpose
 
 For the 4% of locations where JSON templating isn't expressive enough but a full durable module is overkill. Examples:
-- Small random encounters: "30% chance a fox appears."
-- Conditional multi-step dialogue within one location.
-- Dice-driven outcomes with stateful tally.
+- Small random encounters: "30% chance a fox appears." — **today:** an inline expression in the template or an `on_enter` effect with `{kind: "roll", sides: 100, save_as: "roll"}` + a conditional option.
+- Conditional multi-step dialogue within one location. — **today:** a module with 2-3 steps.
+- Dice-driven outcomes with stateful tally. — **today:** a module; tally lives in the flow's state blob.
 
 ## Design constraints
 

@@ -270,6 +270,27 @@ Between durable runtime + version-pinned encounters + escape handlers + auto-rol
 - A player who logs out for a month and comes back to a system that's now v6.0 has their old v4.2 encounter auto-resolved by the v4.2 escape handler (or, if v4.2 was GC'd, by a generic "scene ended quietly" handler).
 - Durable character state is never lost. Transient scene state is always resolvable.
 
+## Adversarial isolation tests
+
+Mandatory test category, enforced as a release-blocker. Lives in `packages/test/isolation/`. Every rule in `ISOLATION_AND_SECURITY.md` that can be expressed as a failing test has one here. Examples (see the full list in `ISOLATION_AND_SECURITY.md` §"Adversarial isolation tests"):
+
+- **Cross-world entity read denial.** User A (member of World 1) attempts to query entities in World 2. Server rejects with `Unauthorized`.
+- **Cache-key collision.** Two worlds with identical bibles issue identical user prompts. Cache keys include world_id + branch_id; entries differ; no cross-world cache hit.
+- **Chat post as another character.** Mutation argument `character_id` is ignored; server resolves via `ctx.auth.userId`. Attempt to spoof returns as the legitimate character.
+- **Cost ledger attribution.** Every `cost_ledger` insert has `user_id = ctx.auth.userId`. Client-provided user_id is ignored.
+- **Prompt injection escape.** Authored string containing closing delimiter sequences (`</user_content>...<system>...`) is sanitized and wrapped such that the model never sees the would-be injection as instructions.
+- **Module writes undeclared component.** Module attempts to write a component_type not in its manifest's `writes` — runtime throws; module code cannot silently succeed.
+- **Import attribution override.** Imported file with `author_pseudonym: "Lilith"` ends up attributed to the importing user's pseudonym in that world, not the frontmatter value.
+- **Audit log immutability.** Any attempt to delete or mutate `audit_log` rows fails at schema-level.
+
+### Gating
+
+A failure in this category **blocks merge**. No warnings, no "known issue" list, no "we'll fix in the next PR." These are security bugs, not style nits.
+
+### Coverage policy
+
+Every new table, endpoint, module capability, or data flow that lands must be accompanied by a new test in this category. A PR that adds a mutation without a corresponding isolation test is flagged by a simple lint rule scanning for `mutation(` and `query(` definitions lacking a matching test file.
+
 ## Unit tests
 
 In addition to the trinity, standard unit tests cover:
@@ -304,10 +325,11 @@ Closed beta is the family. Their play is the manual QA. Feedback captured as str
 ## Cost summary
 
 Per PR, all testing:
-- State-space crawler: ~$0 (cached)
+- State-space crawler: ~$0 (cached, given cache coverage)
 - VLM screenshot eval: ~$0.20
-- Replay corpus: ~$0 (cached)
+- Replay corpus: ~$0 (cached; replays `flow_transitions` not event logs under the state-machine model)
+- Adversarial isolation: ~$0 (no AI calls)
 - Unit + property + integration: $0
-- **Total: ~$0.20 per PR.**
+- **Total: ~$0.20 per PR** — if the cache is warm. Cold-cache runs (schema changes that invalidate cache keys) can spike; see `FEASIBILITY_REVIEW.md` §1.
 
 For a team running 50 PRs/week: $10/week in test costs. Worth it.
