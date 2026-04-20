@@ -1,5 +1,10 @@
 # Weaver — Async + Sync Play (the campaign model)
 
+**Status:** designed
+**Flag:** `flag.campaign_events`
+**Registry:** `FEATURE_REGISTRY.md` #15
+**Last updated:** 2026-04-20
+
 *Direction-shaping decision, 2026-04-20.* One design rule that resolves
 several open questions. Wave 2–3 target.
 

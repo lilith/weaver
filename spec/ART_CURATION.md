@@ -1,5 +1,10 @@
 # Weaver — Art Curation
 
+**Status:** designed
+**Flag:** `flag.art_curation`
+**Registry:** `FEATURE_REGISTRY.md` #12
+**Last updated:** 2026-04-20
+
 *How art lives in Weaver: text-only by default, a wardrobe of treatments per entity, communal cycling and regeneration, reference-board-driven style convergence.*
 
 ## Core stance
