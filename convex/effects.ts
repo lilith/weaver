@@ -11,6 +11,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalAction } from "./_generated/server.js";
+import Anthropic from "@anthropic-ai/sdk";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { advanceWorldTime } from "@weaver/engine/clock";
 import {
@@ -21,6 +22,7 @@ import {
   type InventoryEntry,
 } from "@weaver/engine/effects";
 import { isFeatureEnabled } from "./flags.js";
+import { writeNpcMemory } from "./npc_memory.js";
 import { internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
@@ -425,7 +427,6 @@ export const runNarrate = internalAction({
     ctx,
     { world_id, branch_id, character_id, speaker_entity_id, prompt, salience, memory_event_type },
   ) => {
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const assembled = await ctx.runQuery(internal.narrative.buildPrompt, {
       world_id,
@@ -490,7 +491,6 @@ export const writeNpcMemoryFromAction = internalMutation({
       world_id: args.world_id,
     });
     if (!on) return { written: false };
-    const { writeNpcMemory } = await import("./npc_memory.js");
     const id = await writeNpcMemory(ctx, args);
     return { written: true, id };
   },

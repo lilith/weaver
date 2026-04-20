@@ -11,7 +11,8 @@
     "./biomes": "./src/biomes/index.ts",
     "./clock": "./src/clock/index.ts",
     "./flags": "./src/flags/index.ts",
-    "./effects": "./src/effects/index.ts"
+    "./effects": "./src/effects/index.ts",
+    "./flows": "./src/flows/index.ts"
   },
   "peerDependencies": {
     "@noble/hashes": "*",

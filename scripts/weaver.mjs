@@ -285,6 +285,8 @@ async function dispatch() {
       return cmdSync(rest);
     case "memory":
       return cmdMemory(rest);
+    case "flow":
+      return cmdFlow(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -1521,6 +1523,92 @@ async function cmdMemory([sub, ...a]) {
     return out(r, (o) => `wrote memory ${o.id}`);
   }
   err("usage: weaver memory [show <npc_slug>|add <npc_slug> <event_type> \"summary\"]", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: flow (step-keyed module runtime)
+
+async function cmdFlow([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "list") {
+    const rows = await client.query(ref("flows.listMyFlows"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    return out(
+      rows,
+      (rs) =>
+        rs.length === 0
+          ? "(no flows)"
+          : rs
+              .map(
+                (r) =>
+                  `${r.id}  ${r.module_name.padEnd(12)} step=${r.current_step_id ?? "-"}  ${r.status}`,
+              )
+              .join("\n"),
+    );
+  }
+  if (sub === "show") {
+    const [id] = a;
+    if (!id) err("usage: weaver flow show <id>", 2);
+    const f = await client.query(ref("flows.getFlow"), {
+      session_token: cfg.session_token,
+      flow_id: id,
+    });
+    if (!f) err("flow not found or not yours", 3);
+    return out(f);
+  }
+  if (sub === "start") {
+    const [mod, ...more] = a;
+    if (!mod) err('usage: weaver flow start <module> [--state \'{"k":"v"}\']', 2);
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: flow start is author-only", 2);
+    const stateIdx = more.indexOf("--state");
+    const initial_state = stateIdx >= 0 ? JSON.parse(more[stateIdx + 1]) : {};
+    const r = await client.action(ref("flows.startFlow"), {
+      session_token: cfg.session_token,
+      world_slug,
+      module: mod,
+      initial_state,
+    });
+    return out(r, renderFlowResult);
+  }
+  if (sub === "step") {
+    if (cfg.mode !== "author" && !flags.as)
+      err("observer mode: flow step is author-only", 2);
+    const [id, ...more] = a;
+    if (!id)
+      err('usage: weaver flow step <id> [--choice X] [--text "..."]', 2);
+    const choiceIdx = more.indexOf("--choice");
+    const textIdx = more.indexOf("--text");
+    const input = {};
+    if (choiceIdx >= 0) input.choice = more[choiceIdx + 1];
+    if (textIdx >= 0) input.text = more[textIdx + 1];
+    const r = await client.action(ref("flows.stepFlow"), {
+      session_token: cfg.session_token,
+      flow_id: id,
+      input,
+    });
+    return out(r, renderFlowResult);
+  }
+  err("usage: weaver flow [list|start <mod>|step <id>|show <id>]", 2);
+}
+
+function renderFlowResult(r) {
+  const lines = [];
+  lines.push(
+    `flow=${r.flow_id} module=${r.module_name} status=${r.status} step=${r.current_step_id ?? "-"}`,
+  );
+  for (const s of r.says ?? []) lines.push(`  ${s}`);
+  if (r.ui) {
+    if (r.ui.prompt) lines.push(`> ${r.ui.prompt}`);
+    for (const c of r.ui.choices ?? [])
+      lines.push(`  [${c.id}] ${c.label}`);
+    if (r.ui.free_text) lines.push(`  (or free text)`);
+  }
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------
