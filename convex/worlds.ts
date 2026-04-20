@@ -775,7 +775,7 @@ export const advanceEra = action({
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
       model: CHRONICLE_MODEL,
-      max_tokens: 800,
+      max_tokens: 2000,
       system: [{ type: "text", text: CHRONICLE_SYSTEM_PROMPT }],
       messages: [
         {
@@ -791,11 +791,18 @@ export const advanceEra = action({
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/i, "");
+    if (response.stop_reason === "max_tokens") {
+      throw new Error(
+        `chronicle generation hit max_tokens (2000) before Opus closed the JSON — try a terser --hint`,
+      );
+    }
     let parsed: any;
     try {
       parsed = JSON.parse(text);
     } catch (e: any) {
-      throw new Error(`chronicle JSON parse failed: ${e?.message ?? e}`);
+      throw new Error(
+        `chronicle JSON parse failed (${e?.message ?? e}); raw text: ${text.slice(0, 240)}...`,
+      );
     }
     if (!parsed?.title || !parsed?.body)
       throw new Error("chronicle missing title/body");

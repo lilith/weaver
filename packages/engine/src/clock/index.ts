@@ -107,7 +107,14 @@ export function evalExpression(
 	rng?: () => number,
 ): unknown {
 	if (!expr || !expr.trim()) return undefined;
-	const tokens = tokenize(expr);
+	let tokens: Token[];
+	try {
+		tokens = tokenize(expr);
+	} catch {
+		// Malformed expression (unknown char, unterminated string, etc.).
+		// Fail soft — condition evaluates falsy; dumpLocation stays alive.
+		return undefined;
+	}
 	let pos = 0;
 	const rnd = rng ?? Math.random;
 
@@ -382,17 +389,23 @@ function numDiv(a: unknown, b: unknown): number {
 function compare(op: string, a: unknown, b: unknown): boolean {
 	if (op === "==") return a === b || String(a) === String(b);
 	if (op === "!=") return !(a === b || String(a) === String(b));
-	// Cast for ordering — strings lexicographic; numbers numeric.
-	if (typeof a === "number" && typeof b === "number") {
+	// Ordering: nullish returns false on either side so `this.growth >= 4`
+	// doesn't evaluate true when `growth` is undefined (ASCII "u" > "4").
+	if (a == null || b == null) return false;
+	// Prefer numeric coercion when both sides can parse as finite numbers;
+	// fall back to string lex otherwise (keeps "07:00" >= "21:00" working).
+	const na = Number(a);
+	const nb = Number(b);
+	if (Number.isFinite(na) && Number.isFinite(nb)) {
 		switch (op) {
 			case "<":
-				return a < b;
+				return na < nb;
 			case "<=":
-				return a <= b;
+				return na <= nb;
 			case ">":
-				return a > b;
+				return na > nb;
 			case ">=":
-				return a >= b;
+				return na >= nb;
 		}
 	}
 	const sa = String(a);

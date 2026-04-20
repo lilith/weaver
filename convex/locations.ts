@@ -569,7 +569,15 @@ export const applyOption = mutation({
           memory_event_type: p.payload.memory_event_type,
         });
       }
-      // flow_start deferred until flow runtime lands.
+      if (p.kind === "flow_start") {
+        await ctx.scheduler.runAfter(0, internal.flows.startFlowFromEffect, {
+          world_id,
+          branch_id,
+          character_id: character._id,
+          module: String(p.payload.module ?? ""),
+          initial_state: p.payload.initial_state ?? {},
+        });
+      }
     }
 
     return {

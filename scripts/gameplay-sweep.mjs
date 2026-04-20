@@ -518,6 +518,79 @@ async function main() {
     log("\n[dialogue + combat — skipped (pass --long to exercise)]");
   }
 
+  // --- Option-effect wirings: flow_start through applyOption, legacy item_id ---
+  log("\n[option-effect wirings]");
+  // Snapshot pre-count for legacy inventory test (gives `legacy-widget` via item_id).
+  await client.mutation(api.cli.fixEntityField, {
+    session_token,
+    world_slug,
+    type: "location",
+    slug: "village-square",
+    field: "options",
+    new_value_json: JSON.stringify([
+      {
+        label: "Start a counter flow via option-effect",
+        effect: [
+          { kind: "flow_start", module: "counter", initial_state: { target: 2 } },
+        ],
+      },
+      {
+        label: "Grant a legacy-named item via item_id",
+        effect: [{ kind: "give_item", item_id: "legacy-widget" }],
+      },
+      { label: "Back out", target: "mara-cottage" },
+    ]),
+    reason: "sweep: flow_start + item_id legacy",
+  });
+  await client.mutation(api.cli.teleportCharacter, {
+    session_token,
+    world_slug,
+    loc_slug: "village-square",
+  });
+  const flowsBefore = await client.query(api.flows.listMyFlows, {
+    session_token,
+    world_slug,
+  });
+  await client.mutation(api.locations.applyOption, {
+    session_token,
+    world_id,
+    location_slug: "village-square",
+    option_index: 0,
+  });
+  // Flow starts via scheduler.runAfter(0) — poll briefly.
+  let flowsAfter = flowsBefore;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    flowsAfter = await client.query(api.flows.listMyFlows, {
+      session_token,
+      world_slug,
+    });
+    if (flowsAfter.length > flowsBefore.length) break;
+  }
+  assert(
+    flowsAfter.length > flowsBefore.length,
+    "flow_start option-effect opened a new flow row",
+  );
+  assert(
+    flowsAfter.some((f) => f.module_name === "counter"),
+    "flow_start option-effect created a counter-module flow",
+  );
+  // Legacy item_id fallback: give_item with item_id (not slug) should still add.
+  await client.mutation(api.locations.applyOption, {
+    session_token,
+    world_id,
+    location_slug: "village-square",
+    option_index: 1,
+  });
+  const legacyMe = await client.query(api.cli.whereAmI, {
+    session_token,
+    world_slug,
+  });
+  assert(
+    legacyMe.character.state.inventory?.["legacy-widget"]?.qty === 1,
+    "give_item with legacy item_id field populated inventory under that slug",
+  );
+
   // --- Summary ---
   log("\n== Summary ==");
   log(`${pass} passed, ${fail} failed`);

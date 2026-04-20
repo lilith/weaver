@@ -1338,6 +1338,20 @@ async function cmdValidate([dir]) {
           `locations/${f}.md option "${opt.label}" target "${opt.target}" unknown (stub will be created on import)`,
         );
       }
+      for (const eff of opt.effect ?? []) {
+        const hit = scanEffectLegacy(eff);
+        if (hit)
+          issues.push(
+            `locations/${f}.md option "${opt.label}" effect: ${hit} — rename to "slug"`,
+          );
+      }
+    }
+    for (const list of ["on_enter", "on_leave"]) {
+      for (const eff of p.frontmatter[list] ?? []) {
+        const hit = scanEffectLegacy(eff);
+        if (hit)
+          issues.push(`locations/${f}.md ${list} effect: ${hit} — rename to "slug"`);
+      }
     }
   }
   for (const f of known.npc) {
@@ -1355,6 +1369,17 @@ async function cmdValidate([dir]) {
       (o.issues.length ? o.issues.map((i) => `  - ${i}`).join("\n") : "  (none)"),
   );
   if (!ok) process.exit(1);
+}
+
+// Flag legacy `item_id` on give_item / take_item / use_item / crack_orb —
+// the runtime silently-accepts it, but new authoring should use `slug`.
+function scanEffectLegacy(eff) {
+  if (!eff || typeof eff !== "object") return null;
+  const itemEffects = new Set(["give_item", "take_item", "use_item", "crack_orb"]);
+  if (itemEffects.has(eff.kind) && eff.item_id && !eff.slug) {
+    return `${eff.kind} uses legacy "item_id: ${eff.item_id}"`;
+  }
+  return null;
 }
 
 function parseEntityFile(path) {

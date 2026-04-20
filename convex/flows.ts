@@ -17,6 +17,7 @@
 import { v } from "convex/values";
 import {
   action,
+  internalAction,
   internalMutation,
   internalQuery,
   query,
@@ -141,6 +142,41 @@ export const startFlow = action({
     });
     // Run the entry step immediately.
     return await runStep(ctx, flow_id, undefined, mod);
+  },
+});
+
+/** Start a flow from an option-effect (applyOption → pending → scheduler).
+ *  Skips the session-token auth path since the caller already resolved the
+ *  character; flag-gate is also already applied upstream in the effect
+ *  dispatcher. Silently drops unknown modules (logs a warning). */
+export const startFlowFromEffect = internalAction({
+  args: {
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),
+    module: v.string(),
+    initial_state: v.any(),
+  },
+  handler: async (
+    ctx,
+    { world_id, branch_id, character_id, module: module_name, initial_state },
+  ): Promise<void> => {
+    const mod = MODULES[module_name];
+    if (!mod) {
+      console.warn(
+        `startFlowFromEffect: unknown module "${module_name}" — dropping`,
+      );
+      return;
+    }
+    const { flow_id } = await ctx.runMutation(internal.flows.createFlowRow, {
+      world_id,
+      branch_id,
+      character_id,
+      module_name,
+      initial_state: initial_state ?? {},
+      entry_step: mod.entry ?? "open",
+    });
+    await runStep(ctx, flow_id, undefined, mod);
   },
 });
 

@@ -20,8 +20,19 @@ export const LocationEffect = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("start_combat"), opponent_id: z.string() }),
   z.object({ kind: z.literal("roll"), sides: z.number(), save_as: z.string() }),
   z.object({ kind: z.literal("say"), text: z.string() }),
-  z.object({ kind: z.literal("give_item"), item_id: z.string() }),
-  z.object({ kind: z.literal("take_item"), item_id: z.string() }),
+  z.object({
+    kind: z.literal("give_item"),
+    slug: z.string(),
+    qty: z.number().optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({
+    kind: z.literal("take_item"),
+    slug: z.string(),
+    qty: z.number().optional(),
+  }),
+  z.object({ kind: z.literal("use_item"), slug: z.string() }),
+  z.object({ kind: z.literal("crack_orb"), slug: z.string() }),
   z.object({
     kind: z.literal("add_predicate"),
     predicate: z.string(),

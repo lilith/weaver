@@ -118,29 +118,37 @@ async function applyOneEffect(
         `(-${eff.amount}${eff.damage_kind ? ` ${eff.damage_kind}` : ""} damage)`,
       );
       return;
-    case "give_item":
-      if (!eff.slug || typeof eff.slug !== "string") return; // malformed effect — drop quietly
+    case "give_item": {
+      const slug = normalizeItemSlug(eff);
+      if (!slug) return; // malformed effect — drop quietly
       if (!exec.flags.item_taxonomy) {
-        exec.says.push(`(gained ${eff.qty ?? 1}× ${eff.slug} — item system not yet enabled)`);
+        exec.says.push(`(gained ${eff.qty ?? 1}× ${slug} — item system not yet enabled)`);
         return;
       }
-      await applyGiveItem(ctx, eff, exec);
+      await applyGiveItem(ctx, { ...eff, slug }, exec);
       return;
-    case "take_item":
-      if (!eff.slug || typeof eff.slug !== "string") return;
+    }
+    case "take_item": {
+      const slug = normalizeItemSlug(eff);
+      if (!slug) return;
       if (!exec.flags.item_taxonomy) return;
-      await applyTakeItem(ctx, eff, exec);
+      await applyTakeItem(ctx, { ...eff, slug }, exec);
       return;
-    case "use_item":
-      if (!eff.slug || typeof eff.slug !== "string") return;
+    }
+    case "use_item": {
+      const slug = normalizeItemSlug(eff);
+      if (!slug) return;
       if (!exec.flags.item_taxonomy) return;
-      await applyUseItem(ctx, eff, exec);
+      await applyUseItem(ctx, { ...eff, slug }, exec);
       return;
-    case "crack_orb":
-      if (!eff.slug || typeof eff.slug !== "string") return;
+    }
+    case "crack_orb": {
+      const slug = normalizeItemSlug(eff);
+      if (!slug) return;
       if (!exec.flags.item_taxonomy) return;
-      await applyCrackOrb(ctx, eff, exec);
+      await applyCrackOrb(ctx, { ...eff, slug }, exec);
       return;
+    }
     case "narrate":
       // Queue; the action-tier call site (applyOption's wrapper) will
       // flush these after the mutation commits.
@@ -186,6 +194,17 @@ async function applyOneEffect(
       return;
     }
   }
+}
+
+// Accept both `slug` (canonical) and `item_id` (legacy) on inventory
+// effects. A decent chunk of Argus-imported content was authored with
+// `item_id` before the rename; instead of requiring a migration pass,
+// the runtime reads either. The validator surfaces `item_id` as a
+// rename hint so new content stops drifting.
+function normalizeItemSlug(eff: any): string | undefined {
+  if (typeof eff?.slug === "string" && eff.slug) return eff.slug;
+  if (typeof eff?.item_id === "string" && eff.item_id) return eff.item_id;
+  return undefined;
 }
 
 // --------------------------------------------------------------------

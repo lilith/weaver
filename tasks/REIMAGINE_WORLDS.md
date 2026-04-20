@@ -176,7 +176,7 @@ You don't need to wire these; they're player-driven. But keeping unresolved-targ
 4. **Don't rename slugs.** They're stable identifiers; the importer resolves refs by slug.
 5. **Prefer additive edits.** A new `options:` entry is better than a rewrite of prose.
 6. **Family-first pacing.** A 7-year-old shouldn't hit a wall of dense mechanics on page 1. Introduce systems gradually across the first few turns.
-7. **No combat in Quiet Vale** unless you have a specific narrative arc that warrants it. The cozy tone breaks if there's a fight every ten minutes.
+7. **Quiet Vale combat = silly-humor only** (Legend of the Green Dragon / Hogwarts Life style). Wet-baguette duels with offended geese. Never dramatic. Still rare — one encounter per biome visit at most; cozy tone dominates.
 8. **The Office *should* have combat** but it should feel like office-absurdist physical comedy (tumblefeeds under desks, coffee-cup landmines), not fantasy D&D.
 
 ## Workflow — step by step
@@ -289,12 +289,40 @@ Append to `PLAYTEST_LOG.md`:
 - **Mara dialogue**: expand her `memory_initial` with 2-3 grounded seeds; add "Talk to Mara" as a conditional option on her location (`condition: world.time.hhmm >= '07:00' && world.time.hhmm < '21:00'`).
 - **One era transition**: after the family has spent a few hours in-game, `weaver era advance "early spring gave way to high sun, and the Vale's chickens began a quiet rebellion"`. Write only one chronicle to start; more if the family engages.
 
+**Silly-humor fights (Legend of the Green Dragon / Hogwarts Life style, user override 2026-04-20):**
+- Low-stakes absurd encounters. Example enemies: a mildly offended goose, the village's most passive-aggressive squirrel, a confused hedgehog that rolls into you, sheep who disapprove of your haircut, an umbrella that's been waiting for rain, a jam-thieving magpie.
+- Silly weapons as `gear` items (low attack, comedic names): wet baguette, aggressive spatula, a particularly assertive umbrella, a lightly bruised apple.
+- Victory/defeat lines are punchlines, not drama. No one dies. HP drops, player gets embarrassed, tea restores.
+- Keep rare — `spawn_chance_per_turn` ≤ 0.1, at most one encounter per biome visit. The cozy tone dominates.
+
+**Farming:**
+- Author 3-4 `seed` / `sapling` / `harvest` items (`consumable` or `material` kind).
+- A garden plot location with `plant` / `water` / `harvest` options. Growth gated by world clock ticks (seed → sprout → mature after N turns).
+- A harvested crop can feed into `herbal-tea` or just be a quiet trophy.
+
+**Fishing:**
+- A pond or stream location with a `fish` option that rolls seeded RNG for catch.
+- Catches: `trout`, `old-boot`, `mossy-rock`, `a-letter-in-a-bottle` (which unlocks a narrative thread when read).
+- `fishing-rod` as `gear`; required for the fish option (`condition: has(character.inventory, "fishing-rod")`).
+
+**Reading books:**
+- Author 3-5 books as `item` kind with an `on_read` block that fires a `narrate` effect or grants a small flag.
+- A library or bookshelf location with books as pickups.
+- "Read X" option surfaces on character inventory pages and fires the book's `on_read`.
+
 **Do NOT:**
-- Add combat (breaks tone).
+- Let combat get dramatic or dangerous — silly only.
 - Invent named NPCs beyond Mara + Halvard (the only two in the bible).
 - Change content_rating (stays family).
 
 ### The Office
+
+**Design direction (user override, 2026-04-20):** The Office currently plays as a walking sim across 40+ imported locations. Shift the shape:
+
+- **Consolidate locations.** Fewer, denser, more mechanics per page. Each location should have 3+ options that *do* something (pick up, fight, talk, use, travel, read). Mark thin ambience-only rooms as deprecated; merge adjacent thin rooms into one richer anchor.
+- **Eras drive progression.** Plan a sequence of 3-5 era advances. Each era opens new mechanical affordances (new orb colors, new enemy types, new flow states, new items/keys), transforms the feel of existing office spaces, and gets an Opus-generated chronicle tied to a story beat. Execute 2-3 initially via `weaver era advance --hint "..."`; more as the family engages.
+- **Lean into emergent exploration.** Leave unresolved-target options on location pages (e.g. `target: mysterious-sub-basement` with no authored destination) so expansion-streaming prefetch generates new places on tap. Authored anchors stay minimal.
+- **Fight encounters + items support emergent creativity.** Ambient spawns fire hostile flags; combat options gate on them. Items encourage experimentation — crack an orb, combine keycards, use office supplies as weapons. Dialogue branches based on NPC memory of prior family actions.
 
 **Wave-2 wire-ins that transform the walking sim into actual play:**
 - **Skill orbs as first-class items.** The backstory has 4-6 orb colors. Author each as an `item` entity with `kind: orb`, per-color `on_absorb` effects (yellow→skill roll, blue→flow state bonus, green→heal, red→damage-adjacent stat). The break-room location `canonical_features` already mentions "a large plastic potted plant in the corner, set over a glowing yellow skill orb" — turn that into an actual pickup option.
