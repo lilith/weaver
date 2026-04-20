@@ -581,7 +581,58 @@ export default defineSchema({
     set_at: v.number(),
     notes: v.optional(v.string()),
   })
-    .index("by_key_scope", ["flag_key", "scope_kind", "scope_id"]),
+    .index("by_key_scope", ["flag_key", "scope_kind", "scope_id"])
+    .index("by_key", ["flag_key"]),
+
+  // Runtime bugs — invariant violations caught by sanitizers on the hot path.
+  // Rate-limited per (world_id, code): same-code same-world hits increment
+  // seen_count instead of inserting a new row. Weekly cron in crons.ts GCs
+  // info>7d and warn/error>30d. See `packages/engine/src/diagnostics/` for
+  // sanitizers + `convex/diagnostics.ts` for the dispatcher.
+  runtime_bugs: defineTable({
+    world_id: v.optional(v.id("worlds")),
+    branch_id: v.optional(v.id("branches")),
+    character_id: v.optional(v.id("characters")),
+    severity: v.union(v.literal("info"), v.literal("warn"), v.literal("error")),
+    code: v.string(),                           // short machine-readable code; groups bugs for rate-limit
+    message: v.string(),                        // human-readable (latest-wins when deduping)
+    context: v.optional(v.any()),               // debug payload (latest-wins)
+    seen_count: v.number(),
+    first_seen_at: v.number(),
+    last_seen_at: v.number(),
+  })
+    .index("by_world_severity_time", ["world_id", "severity", "last_seen_at"])
+    .index("by_world_code", ["world_id", "code"])
+    .index("by_severity_time", ["severity", "last_seen_at"]),
+
+  // Expansion streams — live prose chunks from Anthropic streaming as Opus
+  // writes the next location/narration. Client subscribes via convex-svelte
+  // useQuery and watches `text` grow; on `status="done"` with
+  // `result_kind="location"` + `result_slug`, navigates. Row is discardable
+  // once status is terminal. Flag: `flag.expansion_streaming`.
+  expansion_streams: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),
+    parent_location_slug: v.string(),
+    input: v.string(),
+    status: v.union(
+      v.literal("streaming"),
+      v.literal("done"),
+      v.literal("failed"),
+    ),
+    text: v.string(),                           // accumulating chunks
+    result_kind: v.optional(
+      v.union(v.literal("location"), v.literal("narrate")),
+    ),
+    result_slug: v.optional(v.string()),
+    result_narrate_text: v.optional(v.string()),
+    error: v.optional(v.string()),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_character_status", ["character_id", "status"])
+    .index("by_world_status_time", ["world_id", "status", "created_at"]),
 })
 ```
 

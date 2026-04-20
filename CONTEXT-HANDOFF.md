@@ -1,33 +1,101 @@
 # Weaver — Session Handoff
 
-*Started 2026-04-19; last updated 2026-04-20. Read this first; then
-`spec/LIMITATIONS_AND_GOTCHAS.md`; then CLAUDE.md URGENT block; then
-the rest of `spec/`.*
+*Started 2026-04-19; last updated 2026-04-20 (post `9836bca`). Read
+this first; then `spec/LIMITATIONS_AND_GOTCHAS.md`; then CLAUDE.md;
+then the rest of `spec/` as needed.*
 
 This file is a snapshot of everything provisioned, wired, decided, and
 explicitly deferred. Session-end-reload entry point.
 
 ## Fast-read for the next session
 
-1. **`CLAUDE.md`** — standing rules, URGENT-block with applied/pending
-   status per course-correction, Wave 2 POSTER_CHILD ask statuses.
-2. **`spec/LIMITATIONS_AND_GOTCHAS.md`** — 35+ Convex / SvelteKit /
-   Cloudflare / fal.ai / ESM / env-var reality checks from actual
-   build. Each one would cost ~15 min to rediscover. Scan first.
-3. **`UX_PROPOSALS.md`** — 5 open design questions with leanings but
-   not-my-decisions, from Ask 3 / Ask 5 work. Wave-2 review.
-4. **`spec/20_POSTER_CHILD_CAPABILITIES.md`** — five Wave-2 asks
-   overview table + links to specs 21–24. Ask 3 + Ask 5 shipped;
-   1, 2, 4 pending.
-5. **`backstory/IMPORT_CONTRACT.md`** — what the data-authoring agent
-   produces. `backstory/POSTER_CHILD.md` is the parallel "why" doc.
+1. **`CLAUDE.md`** — standing rules, URGENT-block status,
+   Wave 2/POSTER_CHILD ask statuses, all shipped systems listed.
+2. **`FEATURE_REGISTRY.md`** — single source of truth per-feature
+   (status · flag · seam · playtest observations).
+3. **`spec/LIMITATIONS_AND_GOTCHAS.md`** — 35+ Convex / SvelteKit /
+   Cloudflare / fal.ai / ESM / env-var reality checks.
+4. **`tasks/REIMAGINE_WORLDS.md`** — creative-agent brief to re-wire
+   Quiet Vale + The Office with Wave-2 mechanics.
+5. **`PLAYTEST_LOG.md`** — dated observations per feature.
+6. **`UX_PROPOSALS.md`** — open design questions (UX-01 through
+   UX-09).
 
-## Latest commit: `3a51b35` (main, Cloudflare Pages auto-deploy-on-push)
+## Latest commit: `9836bca` (main, Cloudflare Pages auto-deploy-on-push)
 
 Prod live at https://theweaver.quest. Five accounts in household all
 pre-authed on **The Quiet Vale** (`quiet-vale-f96pf4`, 20+ locations)
-and **The Office** (`the-office`, 43 entities from Argus extraction,
-23 FLUX arts queued).
+and **The Office** (`the-office`, 43 entities). All Wave-2 flags on
+for both: `flag.biome_rules`, `flag.item_taxonomy`, `flag.npc_memory`,
+`flag.flows`, `flag.text_prefetch`, `flag.expansion_streaming`,
+`flag.art_curation`, `flag.eras`.
+
+## Wave-2 system surfaces (all shipped as of 2026-04-20)
+
+- **Effect router** at `convex/effects.ts`. Effects: `say goto inc set
+  give_item take_item use_item crack_orb heal damage narrate
+  add_predicate advance_time emit flow_start flow_send
+  spawn_from_biome`. Sanitized on hot path.
+- **Step-keyed flow runtime** at `convex/flows.ts`. Modules:
+  `counter` (proof), `dialogue` (Sonnet + npc_memory auto-write),
+  `combat` (seeded-rolls, damage via router). Effects routed via
+  `internal.effects.applyFlowEffects`.
+- **Item taxonomy** — structured inventory map keyed by slug;
+  `give_item` snapshots kind/color/size/charges for condition reads
+  without DB roundtrip.
+- **Biome rules** — dilation, on_enter/leave/turn, ambient with
+  `chance` gating, spawn_tables (atmospheric tier).
+- **NPC memory** — per-speaker rows; `<speaker_memory>` block in
+  assembleNarrativePrompt when flag on; auto-write on narrate +
+  dialogue turns.
+- **Expansion streaming** — `expansion_streams` progress rows; client
+  `<StreamingPanel>` subscribes via useQuery.
+- **Text prefetch** — `entities.prefetched_from_*` fields + pre-warm
+  draft on unresolved-target option; pick is instant.
+- **Two-way content sync** — `weaver export/validate/push/sync/fix`.
+- **Art curation** — 5 modes, wardrobe UI, reference board, ref-image
+  pipe via `fal-ai/flux-pro/kontext`.
+- **Admin UI** — `/admin/<slug>` (index), `/admin/bible/<slug>`
+  (AI-feedback editor with optimistic concurrency), `/admin/art/<slug>`
+  (reference-board manager), `/admin/eras/<slug>` (advance + chronicles).
+- **Eras v1+v2** — `active_era` + `personal_era`; advance action writes
+  Opus chronicle; in-game catch-up panel.
+- **Diagnostics** — `runtime_bugs` table + sanitizers + `weaver bugs`
+  CLI + weekly GC cron.
+
+## Test surface
+
+- **`scripts/gameplay-sweep.mjs`** — 28 cheap scenarios, 38 with
+  `--long` (hits Sonnet + combat). Runs against live dev.
+- **`apps/play/tests/isolation.spec.ts`** — 28 cross-user adversarial
+  tests.
+- **`apps/play/tests/gameplay.spec.ts`** — 4 Wave-2 UI walks.
+- **`apps/play/tests/e2e.spec.ts`** — 3 core-loop scenarios.
+- Total: 35/35 Playwright green; 28/28 sweep green; 0 svelte-check
+  errors; clean Cloudflare build.
+
+## CLI
+
+`node scripts/weaver.mjs <subcommand>` — non-interactive, LLM-friendly.
+Subcommands:
+
+  session: `login whoami logout --as <email>`
+  world: `worlds world use|create|delete|import`
+  play: `where look go pick weave wait clock state`
+  journey: `journey list|show|resolve|dismiss`
+  entity: `entity list|show|versions`
+  bible: `bible`
+  cost: `cost`
+  fix: `fix <type> <slug> <field> <json>`
+  flag: `flag list|resolve|set|unset`
+  prefetch: `prefetch`
+  sync: `export validate push sync`
+  memory: `memory show|add <npc>`
+  flow: `flow list|start|step|show`
+  art: `art modes|variants|conjure|regen-variant|delete|undelete|upvote|feedback|board-add|migrate|show|regen`
+  bugs: `bugs list|clear`
+  biome: `biome list|auto-palette|auto-palette-all`
+  era: `era list|advance|ack|catchup`
 
 ---
 

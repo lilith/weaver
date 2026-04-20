@@ -2,46 +2,25 @@
 
 Read `CONTEXT-HANDOFF.md` (sibling file) for the full session snapshot of what's provisioned. This file is the standing instructions — shorter, behavior-focused.
 
-## ⚠️ URGENT — spec course corrections landed 2026-04-19
+## URGENT block — resolved / deferred status (2026-04-20)
 
-A spec-review session shipped decisions that change direction on in-flight work. Core corrections are now applied; remaining items are tracked below with status. If you have anything in flight that contradicts a still-pending item, name it and propose a fix rather than silently carrying on.
+The 11-item spec-review block from 2026-04-19 is substantially resolved. Status legend: ✅ shipped · 🟡 partial · 📘 spec-only (deliberate) · ⏳ deferred.
 
-**2026-04-20 integration pass (this block's latest revision):** POSTER_CHILD asks from `backstory/POSTER_CHILD.md` are integrated — overview in `spec/20_POSTER_CHILD_CAPABILITIES.md`, deep-dives in `21_BIOME_RULES.md`, `22_ITEM_TAXONOMY.md`, `23_WORLD_CLOCK.md`, `24_NPC_AND_NARRATIVE_PROMPTS.md`. Household sharing spec lives at `HOUSEHOLD_AND_SHARING.md` (named-space, not numbered). Ask 3 (clock) and Ask 5 (prompt assembler) are shipped.
+1. ✅ **Multi-tenant isolation.** All indexes start with `[world_id, ...]` or `[branch_id, ...]`. `resolveMember` helper enforces membership. 35/35 adversarial Playwright tests pass against every world-scoped mutation/query.
+2. ✅ **Two execution paths.** JSON options + template grammar (ternary / arithmetic / rand / dice / has / length / bracket subscript) + step-keyed flows. Spec 03 inline-script stays marked DEPRECATED; never built.
+3. ✅ **Step-keyed flows shipped.** `flows.current_step_id + state_json`; counter + dialogue + combat modules live in `convex/modules/*`. No generator-replay anywhere. `flow_transitions` diagnostic table is spec-only for now.
+4. 📘 **Trusted-TS modules only.** Wave 1-3 posture preserved.
+5. ⏳ **Multi-player at-transition sync** — not yet relevant. Still single-player deployments.
+6. 🟡 **Blob GC is mark-sweep** — shape correct; mark-sweep job not yet built. `convex/crons.ts` shows the pattern (weekly `runtime_bugs` GC).
+7. ✅ **Isolation-adversarial tests are real.** 35 scenarios, every new mutation lands with one. URGENT rule 7 resolved.
+8. ✅ **`AUTHORING_AND_SYNC.md` shipped.** `weaver export / validate / sync / push / fix` are the on-demand files↔DB mirror. Convex is runtime truth.
+9. 📘 **Privacy spec collapsed.** Family-rating posture.
+10. 🟡 **FEASIBILITY_REVIEW claims** — mostly validated in flight (cost ceilings held, cache-hit behavior confirmed). Some still on paper.
+11. 🟡 **`session_token` pattern vs `ctx.auth`.** Spirit satisfied (never client-claimed user_id); letter awaits Better Auth. Grep gate NOT YET in CI — add if needed. Not a playtest-blocker.
 
-**Status legend:** ✅ applied in code · 🟡 partially applied · ⏳ pending · 📘 spec-only (no code yet required).
+## POSTER_CHILD asks (spec 20) — all shipped
 
-1. ✅🟡 **Multi-tenant isolation from day one.** Every Convex index starts with `[world_id, ...]` or `[branch_id, ...]`. Every query/mutation/action signature requires `world_id` explicitly — no defaults, no "inferred from the user's active world." `ctx.auth.userId` is the only trusted identity source — never accept a client-passed `user_id` / `world_id` / `branch_id` / `character_id` without a membership check. AI cache keys include `world_id` and `branch_id`. Add a `world_memberships` table to the schema **before** any permission-bearing code lands. Isolation between worlds is a security boundary, not hygiene — cross-world leak = vulnerability. Full rule set + adversarial test category in **`spec/ISOLATION_AND_SECURITY.md`**.
-   *Applied in `63f1007` for schema shape, index layout, slug-based addressing, `requireMembership` helper. Identity-source rule is only **partially** applied — see item 11 for the `session_token`-vs-`ctx.auth` gap.*
-
-2. ✅ **Two execution paths, not three.** JSON with safe inline expressions (`{{rand() < 0.15 ? "ambush" : "normal"}}`) + modules. Do **not** build a separate inline-script interpreter with a custom grammar. **`spec/03_INLINE_SCRIPT.md`** is marked deprecated; its conditional/RNG use-cases roll into the template grammar in **`spec/02_LOCATION_SCHEMA.md`**.
-   *Path-2 (inline-script) was never built; safe-inline template grammar not yet implemented — when you add conditionals/RNG to the template engine, implement the extended grammar from `02_LOCATION_SCHEMA.md` §"Template grammar."*
-
-3. ✅ **Durable flows are step-keyed state machines, NOT generator-event-sourced replay.** A module is `{ steps: { [id]: (ctx, state) => ({ next, effects }) } }`; runtime stores `current_step_id + state`; resume is a handler lookup. No generator-replay semantics, no seed-derived cache determinism layer, no closure-capture landmines. This is directly relevant to the Day-3 dialogue flow — design it as step-keyed from the start. See **`spec/01_ARCHITECTURE.md` §"Durable runtime."**
-   *Schema has `flows.current_step_id` + `state_json` + `flow_transitions` per `63f1007`. Runner (the code that walks steps) is Day 3 work.*
-
-4. 📘 **Modules are trusted TypeScript in Wave 1-3.** No QuickJS WASM isolate, no capability sandbox for user-authored modules. All module code is written by you, type-checked, compiled in. The capability-sandbox concept survives as a typed-proxy for clean interfaces (`ModuleCtx`), not as a runtime isolation boundary. User-authored modules are a Wave 4+ concern if ever.
-
-5. ⏳ **Multi-player sync is at-transition only, EXCEPT chat.** Durable character state syncs at location-entry and location-exit; intra-location `this.*` changes don't propagate in real-time between players. Chat stays reactive. Presence panel updates on transitions, not continuously. See **`spec/01_ARCHITECTURE.md` §"Multi-player sync"**.
-   *Not yet relevant — single-player Day 2. Lands naturally when multi-player presence ships in Wave 1.*
-
-6. ✅ **Blob GC is mark-sweep, not refcount.** Periodic job walks live heads, marks reachable blob hashes, sweeps unreachable blobs older than N days. Drop any refcount column from the `blobs` table; drop refcount-increment/decrement paths from blob read/write. See **`spec/12_BLOB_STORAGE.md`**.
-   *Schema is shape-correct; mark-sweep job itself not yet built (and won't matter until R2 lands).*
-
-7. ⏳ **Testing trinity stays Wave 1, starts now.** It's the control surface that makes agent-autonomous development viable — not premature platform. Build it alongside the feature code. Isolation-adversarial tests are a mandatory category (from rule 1). The first few mutations should land with isolation tests in the same PR.
-   *Flagged in `63f1007` as "first PR with isolation tests should be Day 3." **Do it — don't let it slip past the Day-3 dialogue flow PR.** Every new mutation from here on ships with a matching isolation test.*
-
-8. ✅ **`AUTHORING_AND_SYNC.md` is the authoring source format.** You already used this for seeding — good. The spec is now committed at `spec/AUTHORING_AND_SYNC.md`. Keep files conforming to it; the upcoming `weaver validate / import / export` CLI will validate against that spec. Git is not in the pipeline — files are an on-demand mirror, DB is runtime truth.
-
-9. 📘 **Privacy spec collapsed.** `spec/16_PRIVACY_AND_MINORS.md` is now a ~120-line Wave-1 family-instance posture. Task **C6** (in `08_WAVE_1_DISPATCH.md`) shrank from 2 days (guardian dashboard + moderation pipeline) to ~2 hours (family-rating safety prompts + per-user cost cap wiring). Those deferred items are Wave 4+.
-
-10. 📘 **`spec/FEASIBILITY_REVIEW.md` flags open claims.** Cost ceilings, latency budgets, 80KB bundle target, cache hit-rate assumptions, auto-rollback mechanics, Wave 1 scope/timeline. Measure first; don't take numeric claims on faith. Surface divergences. (§4 QuickJS, §6 95/4/1 split, §13 inline-script authoring UX are marked resolved by this session.)
-
-11. 🟡 **`session_token` argument pattern vs `ctx.auth.userId`.** Current Convex mutations accept a `session_token` argument and resolve `user_id` server-side via `resolveSession(ctx, token)`. This satisfies the *spirit* of rule 1 (identity is server-resolved, never client-claimed-user_id) but not the *letter* (`ISOLATION_AND_SECURITY.md` rule 4 specifies `ctx.auth.userId`). Two paths to full compliance:
-   - **(recommended) Keep `session_token` pattern for now**, with a hard discipline: no mutation ever accepts `user_id` as an argument, and every mutation signature lists either `session_token` or derives user via `resolveSession(ctx)` from a Convex HTTP action with the cookie. Add a **lint rule / grep gate** in CI: `grep -r 'user_id: v\.id("users")' convex/*.ts` → any hits in mutation `args` are a PR-blocker unless explicitly whitelisted. Remove when Better Auth lands and `ctx.auth.getUserIdentity()` is available natively.
-   - **(alternative) Wire Convex custom auth now** — use `auth.config.js` with a custom JWT validator that accepts the magic-link session token and exposes `ctx.auth.getUserIdentity()`. More code to throw away when Better Auth lands, but rule-4 compliant today. Choose only if isolation-adversarial testing turns up a concrete vulnerability the lint rule can't catch.
-   Default to the first option until Better Auth replaces the interim auth. Track this in known bugs until resolved.
-
-Velocity note: Lilith clarified that agent-fleet velocity makes the Wave 1 scope realistic (a 1-week estimate = ~30 min real time). Don't defensively scope-cut — keep the full Wave 1 ambition and ship it.
+Ask 1 biome rules · Ask 2 item taxonomy · Ask 3 world clock · Ask 4 NPC memory · Ask 5 narrative prompt assembler. See per-spec status headers in `spec/21_BIOME_RULES.md`, `22_ITEM_TAXONOMY.md`, `24_NPC_AND_NARRATIVE_PROMPTS.md` for what's shipped vs. deferred per ask.
 
 ## Wave 2 targets — consolidated
 
@@ -119,36 +98,39 @@ save-to-map → journal. Five-person household pre-authed to shared Quiet
 Vale. The Office imported from backstory extraction (43 entities, 23
 FLUX scene arts queued).
 
-**Shipped capability shifts (of the 5 in `spec/20_POSTER_CHILD_CAPABILITIES.md`):**
-- Ask 3 — **world clock** done. branches.state carries
-  `{ time: {iso, hhmm, day_of_week, day_counter, week_counter,
-  tick_minutes}, turn }`. Turn-end tick on every applyOption. Option
-  `condition:` strings evaluated server-side via a minimal safe
-  expression grammar (==, !=, <, <=, >, >=, &&, ||, !, path lookup,
-  string/number/bool literals). Conditionally-hidden options filter
-  correctly; each returned option carries `original_index` so picks
-  still resolve unambiguously.
-- Ask 5 — **shared narrative prompt assembler** done.
-  `convex/narrative.ts` exposes `assembleNarrativePrompt` +
-  `internal.narrative.buildPrompt`. Cache_control on the world-bible
-  block means 90%-off every call after the first in a 5-min window.
-  Expansion already migrated.
+**All 5 POSTER_CHILD asks shipped** (spec/20):
+- Ask 1 — biome rules (spec 21) ✅ time_dilation + on_enter/on_leave/on_turn hooks + ambient_effects (seeded-RNG `chance` gating) + spawn_tables (atmospheric tier). `flag.biome_rules` on for sandbox, Quiet Vale, The Office. Commit `0ad8b67`, polish `b67baf3`.
+- Ask 2 — item taxonomy (spec 22) ✅ kind discriminator, per-kind blocks, structured inventory `{slug: {qty, kind, ...}}`, give/take/use/crack_orb effects, narrate effect (Sonnet, via scheduler, flushes to `pending_says`). `flag.item_taxonomy` on. Commit `8764aec`.
+- Ask 3 — world clock ✅ (pre-existing).
+- Ask 4 — NPC memory (spec 24) ✅ `npc_memory` table + `<speaker_memory>` injection in assembleNarrativePrompt + auto-write on narrate with `memory_event_type`. `flag.npc_memory` on. Commit `b5a6da2`.
+- Ask 5 — shared narrative prompt assembler ✅ (pre-existing, extended for Ask 4).
 
-**Not yet shipped (next session):** Ask 1 (biome rules — spec 21),
-Ask 2 (item taxonomy — spec 22), Ask 4 (NPC memory).
+**Wave-2 game systems + runtime (all shipped this cycle):**
+- Feature flags runtime (`flag.*` resolution char→user→world→global) — `9efbf42`.
+- Effect router (`convex/effects.ts` — central dispatcher) — `8764aec`.
+- Step-keyed flow runtime + counter + dialogue + combat modules — `83d25d4`, `fd0ddd7`.
+- Text prefetch (`flag.text_prefetch`) — speculative expansion on unresolved-target options, draft visited_at distinguishes pre-warmed from played — `7a8f7aa`.
+- Two-way content sync — `weaver export / validate / push / sync / fix` CLI — `0680473`.
+- Runtime diagnostics — `runtime_bugs` table + sanitizers on hot paths + `weaver bugs` + weekly GC cron — `57e49ef`, `02a6774`.
+- Expression grammar v2 — ternary, `+ - * /`, `rand()/dice()/min/max/pick/has/length`, bracket-subscript — `57e49ef`, `6017f50`.
+- Biome palette auto-gen (Opus → stored in biome entity payload) — `57e49ef`.
+- Expansion streaming (`flag.expansion_streaming`) — live prose chunks via Anthropic streaming API + reactive Convex row + `<StreamingPanel>` → navigates on done — `4e81239`.
+- Art curation (spec ART_CURATION.md, `flag.art_curation`) — `entity_art_renderings` + `art_feedback` + `art_reference_board`, 5 Wave-2 modes (ambient_palette/banner/portrait_badge/tarot_card/illumination), retrofit migration. Wardrobe UI with eye-icon reveal + mode picker + variant controls + "↻ roll again" tap-to-cycle. `b47bee1`, `9fda9e0`, `2ed577f`.
+- **Reference-image pipe** — `runGenVariant` consults the reference board (priority: entity → biome → mode → style), when a ref exists switches to `fal-ai/flux-pro/kontext` with `image_url = <public R2 URL of top-1 pinned blob>`. Cheap schnell fallback when no refs. — `9836bca`.
+- Eras v1 + v2 (spec 25, `flag.eras`) — `worlds.active_era`, `chronicles` table, `advanceEra` action (Opus chronicle with bible-voice pin), `characters.personal_era`, `pendingEraCatchup` query, `acknowledgeEraCatchup` mutation, in-game catch-up panel on play page, era badge. `/admin/eras/<slug>` page. — `b67baf3`, `9836bca`.
+- Admin UI surfaces — `/admin/<slug>` index, `/admin/art/<slug>` reference-board manager, `/admin/bible/<slug>` AI-feedback bible editor (Opus suggests diff → owner approves → new artifact_version with optimistic concurrency check), `/admin/eras/<slug>` — `2ed577f`, `b67baf3`.
 
-**Other shipped this session:** art pipeline (fal.ai FLUX.schnell →
-R2 blob → location page), AI journey summary (Sonnet on close),
-isolation-adversarial test catch-up (URGENT rule 7 — 12 scenarios
-covering every world-scoped mutation), cross-type relationship
-acceptance in the importer, inline-blob cap raised to 64KB for real
-payloads, custom-domain artz.theweaver.quest, household preauth +
-world ownership transfer to river.lilith@gmail.com as canonical
-primary.
+**Tests:** 28/28 CLI gameplay-sweep (cheap path), 38/38 with `--long` (hits Sonnet + combat rounds); 35/35 Playwright (28 isolation + 4 Wave-2 UI + 3 core); 0 svelte-check errors; clean Cloudflare build on push.
 
-**Deferred per user:** per-location chat (spec defers a wave or two —
-"we're in the same room"). Quiet Vale→separate-repo backup still
-pending. FAL_KEY now has correct id:secret format.
+**Live at:** https://theweaver.quest. Pages auto-deploys on push to main.
+
+**Explicitly deferred** (in FEATURE_REGISTRY, not blocking):
+- Async-sync campaign (spec ASYNC_SYNC_PLAY) — waiting on real multi-player need.
+- Eras v3 — per-era authoring files, era-gated entity visibility, era_version_map runtime consultation.
+- Chat (spec 18) — Lilith's call: "we're in the same room."
+- Quiet Vale → separate-repo backup.
+
+**Creative reimagine in progress:** Lilith flagged both live worlds as "meh/endgame walking sim" on 2026-04-20. Brief for a creative agent at `tasks/REIMAGINE_WORLDS.md` — wire combat/inventory/modules/eras into Quiet Vale + The Office without touching code.
 
 **UX_PROPOSALS.md** at the repo root is a running log of design
 tensions surfaced while building — 5 items so far. Review before
@@ -224,8 +206,8 @@ it holds one story (`argus-daily-grind`, 789K words across 5 volumes).
 - `vite-plugin-pwa@1.2.0` peer range ends at Vite 7 — installed but not registered in `vite.config.ts`. PWA activation deferred until upstream ships Vite 8 support, or Day-10 polish swaps to a different PWA strategy.
 - 3 dependabot advisories on GitHub (1 high, 1 moderate, 1 low) on default branch. Not yet triaged.
 - **`session_token` argument pattern deviates from `ISOLATION_AND_SECURITY.md` rule 4** (which specifies `ctx.auth.userId`). Interim by design — see URGENT item 11 for the resolution path. Until then, add the lint/grep gate described there before any PR touches a mutation.
-- **Isolation-adversarial test category not yet built** (URGENT item 7). First PR that adds a Day-3 mutation must also add the corresponding adversarial test in `packages/test/isolation/` — do not let this backlog grow.
-- **R2 blob path + mark-sweep GC job not yet implemented.** Blobs are inline-only in Convex today. Lands when the art worker wires fal.ai → R2 (Day 4).
+- **Isolation-adversarial tests** — 35 Playwright scenarios now cover every world-scoped mutation/query shipped through 2026-04-20. Every new mutation must add a matching test alongside its commit. ~~URGENT rule 7 resolved.~~
+- **R2 blob path + mark-sweep GC job not yet implemented.** Art blobs go to R2 via the FLUX worker; arbitrary mark-sweep of unreferenced blobs is still a TODO. Runtime `runtime_bugs` cron shows the pattern for weekly jobs if you wire it.
 - **Quiet Vale backup to a separate repo pending.** The family's active shared world is only in Convex right now. User flagged 2026-04-20: "Quiet Vale needs a back up soon to a different repo." Design a `scripts/backup-world.mjs` that exports world state (entities, components, artifact_versions, blobs) to a tarball + pushes to a dedicated `weaver-family-worlds` git repo. Restore is `npx convex import` (Pro) or a custom importer re-creating entities from blob hashes. Spec 12 §Periodic snapshot has the shape. Do not delete or overwrite Quiet Vale.
 - **`preauthorizeHousehold` is forward-only.** Adds memberships to existing worlds; doesn't auto-share future ones. When Lilith creates a new shared world, the mutation must be re-run. See `project_household_and_worlds` memory.
 

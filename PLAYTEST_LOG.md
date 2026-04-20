@@ -115,6 +115,75 @@ this via the export/edit/sync loop ratified this session.
 
 ---
 
+## 2026-04-20 — streaming / art-curation UI / admin surfaces / eras v2
+
+Single agent session, pushed in five commits (`4e81239`, `2ed577f`,
+`b67baf3`, `9836bca`, `02a6774` + their follow-ups). No family
+playtest yet — technical shakedown only.
+
+**Shipped:**
+- Expansion streaming (flag.expansion_streaming) — Anthropic
+  messages.stream → Convex row → convex-svelte subscription → UI
+  shows prose accumulating, navigates on done.
+- Tap-to-cycle art — "↻ roll again" button in variant byline of
+  SceneArt; 44px touch target; reuses regenVariant; variants
+  accumulate so flip-back via mode dots still works.
+- Art admin (/admin/art/[world]) — owner-only reference-board
+  manager with kind grouping, thumbnail display, remove-from-board,
+  plus a flat picker to pin any ready rendering.
+- Bible admin (/admin/bible/[world]) — owner-only AI-feedback
+  editor. Text field → Opus suggests bible diff → per-field
+  before/after UI → apply with optimistic concurrency check →
+  new artifact_version tagged edit_kind=bible_feedback.
+- Biome polish — spawn_tables fire atmospherically with noise-bucket
+  + chance gate + seeded per-turn RNG. CLI `weaver biome list` shows
+  per-biome (dilation, rules?, palette?, spawn_buckets, name).
+- Admin index (/admin/[world]) — owner-only landing linking to
+  bible/art/eras. Worlds list gets hover "admin" chip on owner rows.
+- Eras v1 — active_era counter + chronicles table + advanceEra
+  Opus action writing chronicle JSON with bible-voice pin.
+  /admin/eras/[world] to advance + browse.
+- Eras v2 catch-up — characters.personal_era; in-game
+  "while you were gone…" panel on play page when the world has
+  advanced past the character's personal_era; ack button.
+  Era badge next to the world clock when pending.
+- Reference-image pipe — runGenVariant walks priority
+  (entity:<slug> → biome:<biome> → mode:<mode> → style), picks
+  top-1 ready rendering, if found switches to
+  fal-ai/flux-pro/kontext with image_url = R2 public URL of the
+  ref blob. Schnell fallback when no refs. Prompt_used records the
+  model + kind matched.
+
+**Frictions / spec gaps surfaced:**
+- Temperature parameter deprecated on some Opus 4.7 endpoints;
+  dropped from advanceEra + suggestBibleEdit. Other expansion/
+  dialogue calls unaffected.
+- Convex internal.expansion.runPrefetch was declared `action` not
+  `internalAction` — `internal.*` reference was type-invalid.
+  Promoted to internal. Lesson: fire-and-forget scheduled functions
+  should always be `internal*`.
+- SvelteKit was picking up `apps/play/.env.local` that pointed
+  PUBLIC_CONVEX_URL to a dead local deployment — created by stray
+  `npx convex dev` in the app dir. Deleted. 35/35 Playwright
+  recovered.
+
+**Verdict:** all 8 Wave-2 flags on for sandbox + quiet-vale +
+the-office. Next session expected to be creative-agent content
+upgrade per `tasks/REIMAGINE_WORLDS.md`.
+
+### Still-open spec gaps
+- `noise_decay` on biome rules: authored but runtime doesn't
+  decrement `this.<biome>.noise_level`. Minor.
+- `spawn_tables` fires atmospheric says only; combat-spawn
+  integration (spawn → combat flow start) is deferred.
+- Eras v3 (per-era entity versions, era-gated visibility) deferred.
+- flow_transitions diagnostic table spec'd but not written; not
+  blocking.
+- Single-ref flux-pro/kontext only; multi-ref (kontext-max/multi)
+  deferred — pin more refs first.
+
+---
+
 ## 2026-04-20 — Wave-2 content-upgrade pass (two parallel agents)
 
 **Participants:** two content-upgrade agents (one per world), impersonating `river.lilith@gmail.com` via `--as` for owner-gated sync. No human players.

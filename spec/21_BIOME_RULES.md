@@ -1,5 +1,15 @@
 # Weaver — Biome Rules
 
+**Status:** playtesting (shipped Ask 1 + spawn_tables atmospheric tier)
+**Flag:** `flag.biome_rules` (on for sandbox + quiet-vale + the-office)
+**Registry:** `FEATURE_REGISTRY.md` #17
+**Last updated:** 2026-04-20 (post-commit `b67baf3`)
+
+## Shipped vs. designed
+
+- **Shipped:** `rules:` block on biome frontmatter: `time_dilation`, `on_enter_biome` / `on_leave_biome` / `on_turn_in_biome` hooks, `ambient_effects` with `every_n_turns` + `chance` gating (seeded per-turn RNG for determinism), `spawn_tables` with atmospheric-tier `(a <slug> passes nearby)` says when a noise-bucket roll hits, `spawn_chance_per_turn` control. See `convex/locations.ts applyOption` for the firing order.
+- **Deferred:** spawn_tables → real combat spawn (the atmospheric say is a no-op stub; combat-spawn integration waits for `flag.module_combat` + spawn→combat effect wiring). `noise_decay` field is documented but runtime doesn't yet decrement any `this.<biome>.noise_level`.
+
 ## What this spec does
 
 Promotes **biomes** from descriptive authoring tags (name + prose + establishing_shot_prompt) into **runtime primitives** that carry mechanical rules consumed by the engine. Ask 1 in `backstory/POSTER_CHILD.md`.
@@ -8,7 +18,7 @@ Today: a biome is art + tone. The office-dungeon-deep looks different from a bir
 
 Proposed: biomes carry optional `rules:` that shape the clock, the spawn table, per-turn effects, on-entry narration. This is what makes a biome feel like a *place* rather than a skin.
 
-**Status:** Wave 2 target. Not shipped. Additive — existing biomes without `rules:` keep working unchanged.
+**Additive** — existing biomes without `rules:` keep working unchanged.
 
 ## The `rules:` block
 

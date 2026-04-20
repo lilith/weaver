@@ -36,7 +36,7 @@ Transitions: `designed → implementing → playtesting → shipped` is the happ
 | 1 | blob_storage | shipped | `spec/12_BLOB_STORAGE.md` | — (foundational) | — | build |
 | 2 | multi_tenant_isolation | shipped | `spec/ISOLATION_AND_SECURITY.md` | — (foundational) | blob_storage | build |
 | 3 | magic_link_auth | shipped | `spec/09_TECH_STACK.md` §Auth | — | — | build |
-| 4 | step_state_machine_flows | **playtesting** | `spec/01_ARCHITECTURE.md` §Durable runtime | `flag.flows` | multi_tenant_isolation | build |
+| 4 | step_state_machine_flows | **shipped** | `spec/01_ARCHITECTURE.md` §Durable runtime | `flag.flows` (on: sandbox/qv/office) | multi_tenant_isolation | build |
 | 5 | expansion_loop | shipped | `spec/04_EXPANSION_LOOP.md` | `flag.expansion` (forced on) | blob_storage | build |
 | 6 | drafts_and_journeys | shipped | `spec/19_JOURNEYS_AND_JOURNAL.md` | `flag.journeys` | expansion_loop | build |
 | 7 | art_pipeline_scheduled | **retired** (by `art_curation`) | — | superseded | — | build |
@@ -44,23 +44,28 @@ Transitions: `designed → implementing → playtesting → shipped` is the happ
 | 9 | importer_cli | shipped | `spec/AUTHORING_AND_SYNC.md` | `flag.import_cli` (on) | multi_tenant_isolation | build |
 | 10 | world_clock | shipped | `spec/23_WORLD_CLOCK.md` | `flag.world_clock` (on) | — | build |
 | 11 | narrative_prompt_assembler | shipped | `spec/24_NPC_AND_NARRATIVE_PROMPTS.md` §Ask 5 | — (library) | world_clock | build |
-| 12 | art_curation | **playtesting (backend); UI in flight** | `spec/ART_CURATION.md` | `flag.art_curation` (on: quiet-vale, the-office, sandbox) | blob_storage, effect_router | build |
-| 13 | expansion_streaming | designed | `spec/04_EXPANSION_LOOP.md` §Streaming | `flag.expansion_streaming` | expansion_loop | spec |
-| 14 | text_prefetch | **playtesting** | `spec/04_EXPANSION_LOOP.md` §Predictive text prefetch | `flag.text_prefetch` (on: quiet-vale, the-office, sandbox) | expansion_loop | build |
+| 12 | art_curation | **playtesting** (wardrobe + ref-image pipe shipped) | `spec/ART_CURATION.md` | `flag.art_curation` (on: sandbox/qv/office) | blob_storage, effect_router | build |
+| 13 | expansion_streaming | **playtesting** | `spec/04_EXPANSION_LOOP.md` §Streaming | `flag.expansion_streaming` (on: sandbox/qv/office) | expansion_loop | build |
+| 14 | text_prefetch | **playtesting** | `spec/04_EXPANSION_LOOP.md` §Predictive text prefetch | `flag.text_prefetch` (on: sandbox/qv/office) | expansion_loop | build |
 | 15 | async_sync_campaign | designed | `spec/ASYNC_SYNC_PLAY.md` | `flag.campaign_events` | drafts_and_journeys | spec |
-| 16 | eras_and_progression | designed | `spec/25_ERAS_AND_PROGRESSION.md` | `flag.eras` | async_sync_campaign | spec |
-| 17 | biome_rules | **playtesting** | `spec/21_BIOME_RULES.md` | `flag.biome_rules` (on: quiet-vale, the-office, sandbox) | world_clock, effect_router | build |
-| 18 | item_taxonomy | **playtesting** | `spec/22_ITEM_TAXONOMY.md` | `flag.item_taxonomy` (on: quiet-vale, the-office, sandbox) | effect_router | build |
-| 19 | npc_memory | **playtesting** | `spec/24_NPC_AND_NARRATIVE_PROMPTS.md` §Ask 4 | `flag.npc_memory` (on: quiet-vale, the-office, sandbox) | narrative_prompt_assembler | build |
-| 20 | chat | designed | `spec/18_CHAT_ARCHITECTURE.md` | `flag.chat` | multi_tenant_isolation | spec |
-| 21 | theme_generation | implementing | `spec/10_THEME_GENERATION.md` | `flag.theme_gen` | — | build |
-| 22 | biome_palette_auto_gen | designed | `spec/10_THEME_GENERATION.md` §UX-05 | `flag.biome_palette_gen` | theme_generation, importer_cli | spec |
+| 16 | eras_and_progression | **playtesting** (v1 + v2 catchup) | `spec/25_ERAS_AND_PROGRESSION.md` | `flag.eras` (on: sandbox/qv/office) | narrative_prompt_assembler | build |
+| 17 | biome_rules | **playtesting** | `spec/21_BIOME_RULES.md` | `flag.biome_rules` (on: sandbox/qv/office) | world_clock, effect_router | build |
+| 18 | item_taxonomy | **playtesting** | `spec/22_ITEM_TAXONOMY.md` | `flag.item_taxonomy` (on: sandbox/qv/office) | effect_router | build |
+| 19 | npc_memory | **playtesting** | `spec/24_NPC_AND_NARRATIVE_PROMPTS.md` §Ask 4 | `flag.npc_memory` (on: sandbox/qv/office) | narrative_prompt_assembler | build |
+| 20 | chat | designed (deferred) | `spec/18_CHAT_ARCHITECTURE.md` | `flag.chat` | multi_tenant_isolation | spec |
+| 21 | theme_generation | **shipped** (admin via bible AI-feedback) | `spec/10_THEME_GENERATION.md` | `flag.theme_gen` (deprecated — folded into bible admin) | — | build |
+| 22 | biome_palette_auto_gen | **shipped** (Opus-gen stored in biome entity) | `spec/10_THEME_GENERATION.md` §UX-05 | `flag.biome_palette_gen` (default on) | theme_generation, importer_cli | build |
 | 23 | effect_router | **shipped** | `packages/engine/src/effects` + `convex/effects.ts` | — (foundational) | — | build |
 | 24 | feature_flags_runtime | **shipped** | `FEATURE_REGISTRY.md` + `packages/engine/src/flags` | — (foundational) | — | build |
 | 25 | two_way_content_sync | **shipped** | `spec/AUTHORING_AND_SYNC.md` | — | importer_cli | build |
 | 26 | module_counter | shipped (reference) | `convex/modules/counter.ts` | `flag.flows` | step_state_machine_flows | build |
 | 27 | module_dialogue | **playtesting** | `convex/modules/dialogue.ts` | `flag.module_dialogue` | step_state_machine_flows, narrative_prompt_assembler, npc_memory | build |
 | 28 | module_combat | **shipped** | `convex/modules/combat.ts` | `flag.module_combat` | step_state_machine_flows, effect_router | build |
+| 29 | runtime_diagnostics | **shipped** | `packages/engine/src/diagnostics` + `convex/diagnostics.ts` | — (foundational) | effect_router | build |
+| 30 | expression_grammar_v2 | **shipped** | `packages/engine/src/clock/index.ts` | `flag.expression_grammar_v2` (superseded; grammar always on) | — | build |
+| 31 | admin_ui | **shipped** | `apps/play/src/routes/admin/*` | — | art_curation, eras_and_progression, feature_flags_runtime | build |
+| 32 | ref_image_pipe | **shipped** | `convex/art_curation.ts runGenVariant` | — (folded into art_curation) | art_curation | build |
+| 33 | runtime_bugs_cron | **shipped** | `convex/crons.ts` + `convex/diagnostics.ts gcRuntimeBugs` | — | runtime_diagnostics | build |
 
 *Table maintenance: each row updated when status changes. Add a row when a new spec lands; never delete — mark `retired` or `pulled` instead.*
 

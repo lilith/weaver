@@ -1,9 +1,16 @@
 # Weaver — Eras and Progression
 
-**Status:** designed
-**Flag:** `flag.eras`
+**Status:** playtesting (v1 + v2 catchup shipped)
+**Flag:** `flag.eras` (on for sandbox + quiet-vale + the-office)
 **Registry:** `FEATURE_REGISTRY.md` #16
-**Last updated:** 2026-04-20
+**Last updated:** 2026-04-20 (post-commit `9836bca`)
+
+## Shipped vs. designed
+
+- **v1 (shipped):** `worlds.active_era` counter. `chronicles` table. `advanceEra` action — Opus writes a chronicle JSON `{title, body}` with a system prompt that pins voice to the bible's tone. `/admin/eras/<slug>` page to advance + browse. CLI: `weaver era list|advance|ack|catchup`.
+- **v2 catchup (shipped):** `characters.personal_era` field. `worlds.pendingEraCatchup` query + `acknowledgeEraCatchup` mutation. In-game "while you were gone…" inline panel on the play page when a player's personal_era is behind the world's active_era. Era badge next to the world clock.
+- **v2 gating (deferred):** per-era `entities.era_version_map`, era-filtered bible serialization, stage-shift per-entity rewrites. Schema field exists; runtime doesn't consult it yet.
+- **v3 (deferred):** per-era authoring files (`entity.era-2.md`), arc-beat triggers that auto-advance.
 
 ## Problem
 
