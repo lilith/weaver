@@ -10,8 +10,10 @@ Weaver — browser-based, AI-supported, collaborative world-building game engine
 
 ## Current status
 
-- **Wave 0** — engine kernel spike. Infra provisioned; schema deployed to Convex; SvelteKit scaffold live on Cloudflare Pages. **No Weaver code yet** — no queries, no mutations, no actions, no UI routes. Stock `sv create` output is what's visible at https://theweaver.quest.
-- Next natural slice: Wave 0 Day 2–3 (seed data, `getLocation/getCharacter/getWorldBible` queries, template engine, `/play/[location_id]` route).
+- **Wave 0 Day 2 done.** Playable loop live at https://theweaver.quest: magic-link sign-in → `/play` → rendered location → option taps move you between seeded locations. Backed by content-addressed blobs, BLAKE3-hashed, inline-only in Convex (R2 path lands with the art worker).
+- Seeded content: Quiet Vale tiny-world (bible, village biome, Mara character, village-square + mara-cottage locations) per `spec/AUTHORING_AND_SYNC.md`. Reseed with `npx convex run 'seed:seedTinyWorld' '{"owner_email":"you@example.com"}'` — idempotent on slug.
+- Auth is a minimal Convex-native magic-link (action → Resend email → cookie session); Better Auth swap deferred until we actually need OAuth / 2FA / password. Sessions + auth_tokens live in-schema.
+- Next natural slices: Day 3 NPC chat + dialogue flow; Day 4 art pipeline (fal.ai → R2 blob path wired); Day 5+ world-bible builder UI; expansion loop (intent classifier → 8 atoms).
 - A parallel spec-review session may be happening — be open to spec changes landing that invalidate in-flight code.
 
 ## Stack (locked)
@@ -22,7 +24,7 @@ Weaver — browser-based, AI-supported, collaborative world-building game engine
 - **Image gen:** FLUX.2 [pro] via fal.ai; FLUX Kontext for edits
 - **Storage:** Cloudflare R2 (`weaver-images` + `weaver-general` buckets). Custom domain `art.theweaver.quest` bound to images bucket.
 - **Hosting:** Cloudflare Pages (project `weaver`, auto-deploy on push to `main`)
-- **Auth:** Better Auth + Resend magic links (Wave 1 — not yet wired)
+- **Auth:** Convex-native magic link via Resend (Wave 0 interim); Better Auth planned when OAuth/2FA/password join the scope
 - **Node 22, pnpm 10, workspaces** (`apps/*`, `packages/*`)
 
 Node version: do not downgrade. Vite 8 requires 22.12+.
@@ -79,11 +81,14 @@ it holds one story (`argus-daily-grind`, 789K words across 5 volumes).
 
 ## Known bugs
 
-*(none yet — Wave 0 code hasn't started)*
+- `vite-plugin-pwa@1.2.0` peer range ends at Vite 7 — installed but not registered in `vite.config.ts`. PWA activation deferred until upstream ships Vite 8 support, or Day-10 polish swaps to a different PWA strategy.
+- 3 dependabot advisories on GitHub (1 high, 1 moderate, 1 low) on default branch. Not yet triaged.
 
 ## Investigation notes
 
-*(none yet)*
+- Convex `v.bytes()` accepts `ArrayBuffer`, not `Uint8Array` — writers must slice: `bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)`. Readers get `ArrayBuffer` back and wrap in `new Uint8Array(...)`. Handled in `convex/blobs.ts`.
+- `@noble/hashes` requires the `.js` suffix in import paths (`@noble/hashes/blake3.js`, not `@noble/hashes/blake3`) — Convex's esbuild honors the package's strict `exports` map.
+- SvelteKit `Write` tool over existing files requires a prior `Read`. When scaffolding Day-2 routes, the stock `+page.svelte` and `+layout.svelte` must be Read before Write, or the edit silently no-ops and the deploy serves the old content. Burn memory: always Read before Write on scaffolded files.
 
 ## Spec status
 
