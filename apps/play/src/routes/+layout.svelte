@@ -17,6 +17,7 @@
 	{#if data.user}
 		<div class="flex items-center gap-4 text-sm">
 			<a href="/worlds" class="text-mist-400 no-underline hover:text-rose-400">worlds</a>
+			<a href="/journal" class="text-mist-400 no-underline hover:text-rose-400">journal</a>
 			<span class="font-hand text-xl text-candle-300">· {data.user.display_name}</span>
 			<form method="POST" action="/auth/logout">
 				<button class="rounded px-2 py-1 text-sm text-mist-600 hover:text-mist-100">

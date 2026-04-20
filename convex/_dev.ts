@@ -339,6 +339,60 @@ export const reseatPrimaryOwner = internalMutation({
   },
 });
 
+/**
+ * Back-fill: group every existing draft location into a single
+ * pseudo-journey per character, so the journal UI shows historical
+ * exploration landing somewhere. Idempotent — skips characters who
+ * already have any journey row. One-shot; run once after deploying
+ * the journeys table.
+ */
+export const backfillJourneysFromDrafts = internalMutation({
+  args: { confirm: v.literal("yes-backfill") },
+  handler: async (ctx) => {
+    const characters = await ctx.db.query("characters").collect();
+    let created = 0;
+    for (const c of characters) {
+      // Skip if this character already has any journey.
+      const existing = await ctx.db
+        .query("journeys")
+        .withIndex("by_world_character_status", (q: any) =>
+          q.eq("world_id", c.world_id).eq("character_id", c._id),
+        )
+        .first();
+      if (existing) continue;
+
+      // All drafts authored by this user in this world.
+      const entities = await ctx.db
+        .query("entities")
+        .withIndex("by_branch_type", (q: any) =>
+          q.eq("branch_id", c.branch_id).eq("type", "location"),
+        )
+        .collect();
+      const myDrafts = entities.filter(
+        (e) =>
+          (e as any).draft === true && e.author_user_id === c.user_id,
+      );
+      if (myDrafts.length === 0) continue;
+
+      myDrafts.sort((a, b) => a.created_at - b.created_at);
+      await ctx.db.insert("journeys", {
+        world_id: c.world_id,
+        branch_id: c.branch_id,
+        character_id: c._id,
+        user_id: c.user_id,
+        opened_at: myDrafts[0].created_at,
+        closed_at: myDrafts[myDrafts.length - 1].created_at,
+        entity_ids: myDrafts.map((e) => e._id),
+        entity_slugs: myDrafts.map((e) => e.slug),
+        status: "closed",
+        summary: `${myDrafts.length} ${myDrafts.length === 1 ? "dream" : "dreams"} from before the journal existed`,
+      });
+      created++;
+    }
+    return { journeys_created: created };
+  },
+});
+
 export const ensureSessionForEmail = internalMutation({
   args: { email: v.string(), session_token_hash: v.string() },
   handler: async (ctx, { email, session_token_hash }) => {

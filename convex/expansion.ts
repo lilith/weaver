@@ -13,6 +13,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Id } from "./_generated/dataModel.js";
 import { resolveSession, resolveMember } from "./sessions.js";
 import { writeJSONBlob, readJSONBlob } from "./blobs.js";
+import { recordJourneyTransition } from "./journeys.js";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 2048;
@@ -247,6 +248,16 @@ export const insertExpandedLocation = internalMutation({
       )
       .first();
     if (!character) throw new Error("no character");
+
+    const entityRow = (await ctx.db.get(entityId))!;
+    await recordJourneyTransition(ctx, {
+      world_id,
+      branch_id,
+      user_id,
+      character_id: character._id,
+      new_location: entityRow,
+    });
+
     await ctx.db.patch(character._id, {
       current_location_id: entityId,
       updated_at: now,

@@ -3,6 +3,19 @@
 	let { data, form } = $props();
 	let expanding = $state(false);
 	let inputEl = $state<HTMLTextAreaElement | undefined>();
+
+	// Which dreams from the closed journey is the player keeping.
+	// Defaults to all boxes checked — the most common intent after a
+	// journey is "yeah, keep what I made." Opt-out, not opt-in.
+	let keepSet = $state<Record<string, boolean>>({});
+	$effect(() => {
+		const j = data.closed_journey;
+		if (j) {
+			const next: Record<string, boolean> = {};
+			for (const e of j.entities) next[e.slug] = e.draft; // pre-check unsaved ones
+			keepSet = next;
+		}
+	});
 </script>
 
 <svelte:head>
@@ -14,6 +27,9 @@
 <article class="space-y-6 pb-24">
 	<header class="space-y-1">
 		<h1 class="font-display text-4xl tracking-tight text-mist-100 sm:text-5xl">
+			{#if data.location.draft}
+				<span class="dream-glyph" title="a dream — not yet on the map">✦</span>
+			{/if}
 			{data.location.name}
 		</h1>
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -23,11 +39,6 @@
 			{/if}
 			{#if data.location.author_pseudonym}
 				<span class="font-hand text-base text-teal-400">✦ by {data.location.author_pseudonym}</span>
-			{/if}
-			{#if data.location.draft}
-				<span class="rounded-full border border-rose-400/40 bg-rose-500/10 px-2 py-0.5 font-hand text-base text-rose-300">
-					dreamed, not yet on the map
-				</span>
 			{/if}
 		</div>
 	</header>
@@ -40,7 +51,6 @@
 		</p>
 	</section>
 
-	<!-- Free-text input: compact, inline, icon submit — visible without scrolling. -->
 	<form
 		method="POST"
 		action="?/expand"
@@ -93,9 +103,19 @@
 		</section>
 	{/if}
 
-	{#if form?.saved}
+	{#if form?.saved_cluster}
 		<section class="rounded-lg border border-candle-400/40 bg-candle-500/10 px-4 py-3 text-sm text-candle-300">
-			✨ Woven into the map. Anyone who passes through {form.parent_name ?? 'here'} can now find it.
+			{#if form.saved_cluster.saved > 0}
+				✨ {form.saved_cluster.saved} of {form.saved_cluster.total} woven into the map.
+			{:else}
+				Nothing kept this time — the dreams are still in your journal if you want them later.
+			{/if}
+		</section>
+	{/if}
+
+	{#if form?.dismissed}
+		<section class="rounded-lg border border-mist-600/40 bg-mist-600/10 px-4 py-3 text-sm text-mist-400">
+			The journey's tucked into your journal — come back for it any time.
 		</section>
 	{/if}
 
@@ -105,16 +125,60 @@
 		</section>
 	{/if}
 
-	{#if data.location.draft}
-		<section class="story-card space-y-3 px-5 py-4">
-			<p class="font-hand text-xl text-candle-300">
-				This place is yours alone, for now.
-			</p>
-			<p class="text-sm text-mist-400">
-				Save it to the map and anyone who comes through {data.parentName ?? 'the way you came'} can find it.
-			</p>
-			<form method="POST" action="?/save" use:enhance>
-				<button type="submit" class="storybook-button">✧ save to the map</button>
+	<!-- Journey-close cluster panel: only shown when we've just returned
+	     to canonical ground after one or more dreams -->
+	{#if data.closed_journey && data.closed_journey.entities.length > 0}
+		<section class="story-card space-y-4 px-5 py-5">
+			<div class="space-y-1">
+				<p class="font-hand text-2xl text-candle-300">the way back</p>
+				<p class="text-sm text-mist-400">
+					You wandered {data.closed_journey.entities.length === 1
+						? 'somewhere'
+						: `through ${data.closed_journey.entities.length} places`}.
+					Keep any for the shared map?
+				</p>
+				{#if data.closed_journey.summary}
+					<p class="text-sm italic text-mist-400">{data.closed_journey.summary}</p>
+				{/if}
+			</div>
+
+			<form method="POST" action="?/save_cluster" use:enhance class="space-y-2">
+				<input type="hidden" name="journey_id" value={data.closed_journey._id} />
+				<ul class="space-y-2">
+					{#each data.closed_journey.entities as entity (entity.entity_id)}
+						<li>
+							<label class="flex cursor-pointer items-center gap-3 rounded-lg border border-mist-800/50 bg-velvet-800/40 px-3 py-2 hover:border-candle-400/50">
+								<input
+									type="checkbox"
+									name="keep_slug"
+									value={entity.slug}
+									checked={keepSet[entity.slug]}
+									onchange={(e) => (keepSet[entity.slug] = (e.target as HTMLInputElement).checked)}
+									disabled={!entity.draft}
+									class="h-5 w-5 accent-candle-400"
+								/>
+								<span class="flex-1">
+									<span class="font-display text-lg text-mist-100">{entity.name}</span>
+									{#if entity.biome}
+										<span class="ml-2 text-xs uppercase tracking-wide text-mist-600">{entity.biome}</span>
+									{/if}
+									{#if !entity.draft}
+										<span class="ml-2 font-hand text-sm text-candle-300">already saved</span>
+									{/if}
+								</span>
+							</label>
+						</li>
+					{/each}
+				</ul>
+				<div class="flex flex-wrap gap-2">
+					<button type="submit" class="storybook-button">✧ keep the checked ones</button>
+				</div>
+			</form>
+			<form method="POST" action="?/dismiss_journey" use:enhance>
+				<input type="hidden" name="journey_id" value={data.closed_journey._id} />
+				<button type="submit" class="text-sm text-mist-400 underline decoration-mist-800 hover:text-rose-400">
+					ask me later (tuck into journal)
+				</button>
 			</form>
 		</section>
 	{/if}
@@ -134,6 +198,14 @@
 </article>
 
 <style>
+	.dream-glyph {
+		display: inline-block;
+		color: var(--color-candle-300);
+		font-size: 0.7em;
+		vertical-align: 0.2em;
+		margin-right: 0.3em;
+		text-shadow: 0 0 12px rgba(249, 213, 122, 0.45);
+	}
 	.weave-icon-button {
 		display: inline-flex;
 		align-items: center;
@@ -162,7 +234,9 @@
 			0 0 0 1px rgba(240, 80, 128, 0.45),
 			0 0 32px rgba(240, 80, 128, 0.35);
 	}
-	.weave-icon-button:active { transform: translateY(0); }
+	.weave-icon-button:active {
+		transform: translateY(0);
+	}
 	.weave-icon-button:disabled {
 		opacity: 0.55;
 		cursor: default;

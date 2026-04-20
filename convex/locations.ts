@@ -6,6 +6,7 @@ import { query, mutation } from "./_generated/server.js";
 import { v } from "convex/values";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { resolveMember } from "./sessions.js";
+import { recordJourneyTransition } from "./journeys.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 async function readAuthoredPayload<T>(
@@ -149,7 +150,7 @@ export const applyOption = mutation({
     }
 
     let newLocationSlug: string | null = null;
-    let newLocationId: Id<"entities"> | null = null;
+    let newLocationEntity: Doc<"entities"> | null = null;
     let needsExpansion: { hint: string } | null = null;
     if (gotoSlug) {
       const target = await ctx.db
@@ -162,23 +163,39 @@ export const applyOption = mutation({
         )
         .first();
       if (target) {
-        newLocationId = target._id;
+        newLocationEntity = target as Doc<"entities">;
         newLocationSlug = target.slug;
       } else {
-        // Unresolved target — the authored / generated option points at a
-        // slug that hasn't been created yet. Signal the client to run the
-        // expansion loop with the option's label as the hint.
+        // Unresolved target — signal the client to chain into expansion.
         needsExpansion = { hint: option.label };
       }
     }
 
+    let closedJourneyId: Id<"journeys"> | null = null;
+    if (newLocationEntity) {
+      const j = await recordJourneyTransition(ctx, {
+        world_id,
+        branch_id,
+        user_id,
+        character_id: character._id,
+        new_location: newLocationEntity,
+      });
+      closedJourneyId = j.closed_journey_id;
+    }
+
     await ctx.db.patch(character._id, {
       state,
-      current_location_id: newLocationId ?? character.current_location_id,
+      current_location_id:
+        newLocationEntity?._id ?? character.current_location_id,
       updated_at: Date.now(),
     });
 
-    return { says, new_location_slug: newLocationSlug, needs_expansion: needsExpansion };
+    return {
+      says,
+      new_location_slug: newLocationSlug,
+      needs_expansion: needsExpansion,
+      closed_journey_id: closedJourneyId,
+    };
   },
 });
 

@@ -273,6 +273,37 @@ export default defineSchema({
     .index("by_branch_blob", ["branch_id", "blob_hash"]),
 
   // ---------------------------------------------------------------
+  // Journeys — a run of draft locations between two canonical stops.
+  // Opens on first draft entered from canonical, closes on arrival back
+  // at canonical. See spec/19_JOURNEYS_AND_JOURNAL.md.
+  journeys: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),
+    user_id: v.id("users"),
+    opened_at: v.number(),
+    closed_at: v.optional(v.number()),
+    // Drafts visited during the journey, in order.
+    entity_ids: v.array(v.id("entities")),
+    entity_slugs: v.array(v.string()),
+    status: v.union(
+      v.literal("open"), // in-flight; character is currently on a draft
+      v.literal("closed"), // returned to canonical; awaiting user decision
+      v.literal("saved"), // user saved at least one draft from this journey
+      v.literal("discarded"), // user explicitly declined to save any
+      v.literal("dismissed"), // hidden from journal (drafts remain navigable via URL)
+    ),
+    // Optional AI-generated one-liner shown in the journal + close panel.
+    summary: v.optional(v.string()),
+  })
+    .index("by_world_user", ["world_id", "user_id"])
+    .index("by_world_character_status", [
+      "world_id",
+      "character_id",
+      "status",
+    ]),
+
+  // ---------------------------------------------------------------
   // Auth (pre-world)
   auth_tokens: defineTable({
     token_hash: v.string(),
