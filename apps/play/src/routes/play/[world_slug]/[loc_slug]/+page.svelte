@@ -28,13 +28,17 @@
 <article class="space-y-6 pb-24">
 	<header class="space-y-2">
 		{#if data.art_curation?.enabled}
-			<!-- New wardrobe path — text-default; reveal via eye. -->
-			<SceneArt
-				entityId={data.art_curation.entity_id}
-				worldSlug={data.art_curation.world_slug}
-				sessionToken={data.art_curation.session_token}
-				artCurationEnabled={true}
-			/>
+			<!-- New wardrobe path — text-default; reveal via eye.
+				 Keyed by entity_id so we remount on navigation: the eye
+				 always returns to its closed state on a new location. -->
+			{#key data.art_curation.entity_id}
+				<SceneArt
+					entityId={data.art_curation.entity_id}
+					worldSlug={data.art_curation.world_slug}
+					sessionToken={data.art_curation.session_token}
+					artCurationEnabled={true}
+				/>
+			{/key}
 		{:else}
 			<!-- Legacy single-slot art path. -->
 			<div class="scene-art" class:scene-art-loading={!data.location.art_url}>
@@ -78,59 +82,23 @@
 		>
 			{data.location.description}
 		</p>
+
+		<!-- Narrations (says + narrate) land *with* the prose, not between
+			 the choice buttons and the weave input. Keeps the action region
+			 contiguous. -->
+		{#if form?.says?.length}
+			<div class="story-aside mt-4 space-y-2">
+				{#each form.says as line}
+					<p class="italic">{line}</p>
+				{/each}
+			</div>
+		{/if}
+		{#if form?.narrate}
+			<div class="story-aside mt-4 space-y-2">
+				<p class="italic">{form.narrate}</p>
+			</div>
+		{/if}
 	</section>
-
-	<form
-		method="POST"
-		action="?/expand"
-		class="flex items-end gap-2"
-		use:enhance={() => {
-			expanding = true;
-			return async ({ update }) => {
-				await update({ reset: true });
-				expanding = false;
-				inputEl?.focus();
-			};
-		}}
-	>
-		<textarea
-			bind:this={inputEl}
-			name="input"
-			rows="1"
-			required
-			maxlength="500"
-			placeholder={'or write what you do…'}
-			class="storybook-input min-h-[2.75rem] flex-1 resize-none"
-			disabled={expanding}
-		></textarea>
-		<button
-			type="submit"
-			class="weave-icon-button"
-			disabled={expanding}
-			title="weave this into the world"
-			aria-label="weave this into the world"
-		>
-			{#if expanding}
-				<span class="weave-spinner"></span>
-			{:else}
-				<span aria-hidden="true">✧</span>
-			{/if}
-		</button>
-	</form>
-
-	{#if form?.says?.length}
-		<section class="story-aside space-y-2">
-			{#each form.says as line}
-				<p class="italic">{line}</p>
-			{/each}
-		</section>
-	{/if}
-
-	{#if form?.narrate}
-		<section class="story-aside space-y-2">
-			<p class="italic">{form.narrate}</p>
-		</section>
-	{/if}
 
 	{#if form?.saved_cluster}
 		<section class="rounded-lg border border-candle-400/40 bg-candle-500/10 px-4 py-3 text-sm text-candle-300">
@@ -214,6 +182,9 @@
 
 	<hr class="ornate-divider" />
 
+	<!-- Choices + weave-input are contiguous: the "what can I do now"
+		 block. Options first, weave textarea directly below; narrations
+		 don't interrupt the action region. -->
 	<section class="space-y-3">
 		{#each data.location.options as option (option.original_index ?? option.label)}
 			<form method="POST" action="?/pick" use:enhance>
@@ -223,8 +194,97 @@
 				</button>
 			</form>
 		{/each}
+
+		<form
+			method="POST"
+			action="?/expand"
+			class="flex items-end gap-2 pt-1"
+			use:enhance={() => {
+				expanding = true;
+				return async ({ update }) => {
+					await update({ reset: true });
+					expanding = false;
+					inputEl?.focus();
+				};
+			}}
+		>
+			<textarea
+				bind:this={inputEl}
+				name="input"
+				rows="1"
+				required
+				maxlength="500"
+				placeholder={'or write what you do…'}
+				class="storybook-input min-h-[2.75rem] flex-1 resize-none"
+				disabled={expanding}
+			></textarea>
+			<button
+				type="submit"
+				class="weave-icon-button"
+				disabled={expanding}
+				title="weave this into the world"
+				aria-label="weave this into the world"
+			>
+				{#if expanding}
+					<span class="weave-spinner"></span>
+				{:else}
+					<span aria-hidden="true">✧</span>
+				{/if}
+			</button>
+		</form>
 	</section>
+
+	{@render inventoryPanel(data.character_state)}
 </article>
+
+{#snippet inventoryPanel(state: Record<string, unknown>)}
+	{@const inv = state?.inventory as any}
+	{@const entries =
+		inv && typeof inv === 'object' && !Array.isArray(inv)
+			? Object.entries(inv).filter(([, v]: any) => (v?.qty ?? 0) > 0)
+			: Array.isArray(inv) && inv.length > 0
+				? inv.map((i: any, ix: number) => [typeof i === 'string' ? i : (i?.slug ?? `item-${ix}`), typeof i === 'string' ? { qty: 1 } : i])
+				: []}
+	{@const hp = state?.hp as number | undefined}
+	{@const gold = state?.gold as number | undefined}
+	{@const energy = state?.energy as number | undefined}
+	{#if entries.length > 0 || typeof hp === 'number' || typeof gold === 'number' || typeof energy === 'number'}
+		<section class="story-card mt-4 space-y-3 px-4 py-3">
+			<div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+				<span class="font-hand text-candle-300">what you carry</span>
+				{#if typeof hp === 'number'}
+					<span class="text-mist-300">hp <span class="font-mono text-mist-100">{hp}</span></span>
+				{/if}
+				{#if typeof gold === 'number'}
+					<span class="text-mist-300">gold <span class="font-mono text-mist-100">{gold}</span></span>
+				{/if}
+				{#if typeof energy === 'number'}
+					<span class="text-mist-300">energy <span class="font-mono text-mist-100">{energy}</span></span>
+				{/if}
+			</div>
+			{#if entries.length > 0}
+				<ul class="flex flex-wrap gap-2">
+					{#each entries as [slug, entry] (slug)}
+						<li
+							class="inline-flex items-center gap-2 rounded border border-mist-800/60 bg-velvet-800/50 px-2.5 py-1 text-sm"
+							title={(entry as any)?.kind ? `${slug} (${(entry as any).kind})` : String(slug)}
+						>
+							<span class="font-display text-mist-100">{slug}</span>
+							{#if ((entry as any)?.qty ?? 1) > 1}
+								<span class="font-mono text-xs text-mist-400">×{(entry as any).qty}</span>
+							{/if}
+							{#if (entry as any)?.kind}
+								<span class="font-hand text-xs text-teal-400">{(entry as any).kind}</span>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="text-xs text-mist-500">(you carry nothing yet)</p>
+			{/if}
+		</section>
+	{/if}
+{/snippet}
 
 <style>
 	.scene-art {
