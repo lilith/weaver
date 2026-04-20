@@ -4,7 +4,9 @@ Read `CONTEXT-HANDOFF.md` (sibling file) for the full session snapshot of what's
 
 ## ⚠️ URGENT — spec course corrections landed 2026-04-19
 
-A spec-review session shipped decisions that change direction on in-flight work. **Read before starting Day 3 (NPC chat + dialogue flow)** — several of these affect how flows/modules/isolation must be built from the first line of code. If you have anything in flight that contradicts, name it and propose a fix rather than silently carrying on.
+A spec-review session shipped decisions that change direction on in-flight work. Core corrections are now applied; remaining items are tracked below with status. If you have anything in flight that contradicts a still-pending item, name it and propose a fix rather than silently carrying on.
+
+**2026-04-20 integration pass (this block's latest revision):** POSTER_CHILD asks from `backstory/POSTER_CHILD.md` are integrated — overview in `spec/20_POSTER_CHILD_CAPABILITIES.md`, deep-dives in `21_BIOME_RULES.md`, `22_ITEM_TAXONOMY.md`, `23_WORLD_CLOCK.md`, `24_NPC_AND_NARRATIVE_PROMPTS.md`. Household sharing spec lives at `HOUSEHOLD_AND_SHARING.md` (named-space, not numbered). Ask 3 (clock) and Ask 5 (prompt assembler) are shipped.
 
 **Status legend:** ✅ applied in code · 🟡 partially applied · ⏳ pending · 📘 spec-only (no code yet required).
 
@@ -40,6 +42,28 @@ A spec-review session shipped decisions that change direction on in-flight work.
    Default to the first option until Better Auth replaces the interim auth. Track this in known bugs until resolved.
 
 Velocity note: Lilith clarified that agent-fleet velocity makes the Wave 1 scope realistic (a 1-week estimate = ~30 min real time). Don't defensively scope-cut — keep the full Wave 1 ambition and ship it.
+
+## Wave 2 targets (POSTER_CHILD asks — `spec/20_POSTER_CHILD_CAPABILITIES.md`)
+
+Five capability shifts needed to make The Office (imported from `backstory/stories/argus-daily-grind/worlds/the-office/`) feel like the LitRPG it is rather than a flat location tree. Quiet Vale is unaffected — everything is additive.
+
+| Ask | Spec | Status |
+|---|---|---|
+| 1. Biome rules (time_dilation, hooks, spawn_tables) | `21_BIOME_RULES.md` | ⏳ pending |
+| 2. Item taxonomy (`kind:` + first-class orbs) | `22_ITEM_TAXONOMY.md` | ⏳ pending |
+| 3. World clock (`hhmm`, day-of-week, `tick_minutes`) | `23_WORLD_CLOCK.md` | ✅ shipped `a6985aa` |
+| 4. NPC memory auto-injected into dialogue | `24_NPC_AND_NARRATIVE_PROMPTS.md` | ⏳ pending |
+| 5. Shared `assembleNarrativePrompt` helper | `24_NPC_AND_NARRATIVE_PROMPTS.md` | ✅ shipped `d761c03` (`convex/narrative.ts`) |
+
+Recommended order for the remaining three (from `20_POSTER_CHILD_CAPABILITIES.md` §Sequencing): Ask 1 (biome rules) → Ask 2 (items) → Ask 4 (NPC memory). Each is ~3-5 hours at current velocity. Every mutation lands with a matching isolation-adversarial test (rule 7).
+
+## Open design questions — main agent picks
+
+These came out of the integration pass with a recommendation; main agent resolves them during implementation and records the choice in `17_DECISION_LOG.md`.
+
+- **Character role enum.** Three candidate enums in flight across spec / extraction / importer. Recommendation: IMPORT_CONTRACT's `player_character | travelling_npc | antagonist | pet`, location-bound NPCs stay in `npcs/<slug>.md` with no role. See `spec/AUTHORING_AND_SYNC.md` §"Character role enum — OPEN QUESTION."
+- **Cross-type relationships** (`characters[].relationships[].with:` targeting an npc slug). Recommendation: accept. `backstory/index.md` already documents the tension; the importer's cross-type-rels commit (in `671bbdb`) implies the de-facto answer is already "accept" — ratify in the decision log.
+- **Quiet Vale backup to a separate repo.** User-flagged 2026-04-20. `scripts/backup-world.mjs` + private `weaver-family-worlds` repo. Spec shape in `HOUSEHOLD_AND_SHARING.md` §"Quiet Vale backup to a separate repo." Schedule before any destructive refactor touching world content.
 
 ## What this project is
 
