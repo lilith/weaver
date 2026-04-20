@@ -130,11 +130,8 @@ recordJourneyTransition(ctx, character, dest=draft):
   if no open journey: open one with dest as entity[0]
   else: append dest to journey entity list
   ↓
-scheduleArtForEntity (fal.ai FLUX → R2 blob, async):
-  action loads bible style + biome prompt + location prose
-  FLUX.2 [pro] gen; download bytes; upload to R2 via S3
-  internal mutation writes blob row + patches entity.art_blob_hash + art_status=ready
-  (player probably already moved on; next visit shows art; storybook placeholder meanwhile)
+(no art generation triggered here — art is user-click-only via the eye icon;
+ see `ART_CURATION.md`. The storybook placeholder from earlier iterations is gone.)
   ↓
 player moves back to a canonical location:
   recordJourneyTransition(ctx, character, dest=canonical):
@@ -244,6 +241,130 @@ Route to NPC. If NPC has a dialogue module, enter its flow. If not, Sonnet handl
 ### `attack`
 
 Emit `start_combat` with target. Wave 1 combat is hardcoded (see `01_ARCHITECTURE.md`), so this hands control to the combat system. Wave 2 this is a module event.
+
+## Streaming + transition UX
+
+An Opus expansion call takes 4-10 seconds end-to-end. Silent latency during that window is the worst part of current play. The fix is multi-layered so perceived latency drops to near-zero regardless of actual call duration.
+
+### 1. Immediate commitment feedback (≤ 100ms)
+
+When the player taps an option or submits free-text, the UI **commits visibly within 100ms**, before any server round-trip completes:
+
+- The tapped option gets a "committed" visual — a subtle ink-fill animation, or a small check-glyph inside the button.
+- Other option buttons dim to ~40% opacity and become non-interactive. Prevents double-click / racing clicks.
+- The free-text input clears and dims. If free-text, the submitted phrase slides up as a small quoted preview near the top of the page.
+
+The user always sees their action was registered.
+
+### 2. Skeleton render with palette (≤ 500ms)
+
+The new location's **layout skeleton** renders from inferrable state before any content arrives:
+
+- **Title placeholder:** option.label becomes the placeholder title, styled in-place.
+- **Biome tint:** if the option has an associated biome (from `target.biome` if resolvable, or a hint in the parent), the page background tints to that biome's palette (per `10_THEME_GENERATION.md` §per-biome palette overrides). Adds location feel even with no text.
+- **Prose shimmer:** 2-4 shimmering skeleton lines where the description will arrive.
+- **Option shimmer:** 3 button-shaped shimmers where the new options will render.
+
+The page already *looks like a location* within half a second. No full-screen spinner, no scroll-jump.
+
+### 3. In-world placeholder line (500ms-1s until first token)
+
+During the gap between skeleton render and Opus's first streamed token, a short atmospheric line sits in the prose area:
+
+- "The scene ahead is resolving…"
+- "Ink settles on the page."
+- "The world considers your choice."
+- "A door opens — slowly."
+- "The ground takes form under your feet."
+
+Cycled randomly from a pool of ~8 lines. Fades out when the first real token arrives; doesn't block reading.
+
+No technical spinner. No loading-percent. The wait is narrativized.
+
+### 4. Opus streaming
+
+The expansion call uses `stream: true`. Tokens arrive incrementally; the UI parses progressively:
+
+- **Name + biome token batch (first ~0.8s):** updates the title and locks in the biome-accurate palette if different from the inferred one.
+- **Description stream (~2-4s):** prose renders character-by-character (or word-by-word with a slight stagger) into the description area. **The user reads as it writes.** A 6-second stream feels like watching handwriting.
+- **Options (~1-2s):** option buttons fade in one at a time as they parse. First option visible within ~3s of page load; all options typically within 6s.
+
+Client uses the Anthropic SDK's streaming iterator. SvelteKit server action returns a `ReadableStream`; client parses JSON deltas and updates reactive state per chunk. Fallback for networks that can't stream: buffer + show-all-at-once with the placeholder line still visible.
+
+### 5. Long-wait escalation
+
+Most calls finish in 3-8s. For slower cases:
+
+- **At 10s:** placeholder line rotates to a more patient variant ("The world is taking a moment to answer…").
+- **At 20s:** a subtle "It's slower than usual today" banner fades in; the action stays in-flight but the user can back out.
+- **At 30s:** auto-fail with a "try again" button; the half-generated draft (if any) is discarded.
+
+Escalation is a safety net for flaky networks or Anthropic hiccups, not the common path.
+
+### 6. Error handling mid-stream
+
+If the stream breaks mid-flight: commit whatever's usable (partial description, parseable options). Log the failure. Offer a "continue with what's here" or "try again" affordance. Don't show raw error text to the player — it breaks immersion.
+
+### Implementation notes
+
+- `convex/expansion.ts` switches from non-streaming `anthropic.messages.create` to `anthropic.messages.stream`. The action returns a Convex-reactive `expansion_progress` row with `{ status, title, biome, description_chunks, options, error }` fields, updated per chunk via a helper `writeExpansionProgress(ctx, flow_id, delta)` inside the streaming loop. Client subscribes to the row via reactive query.
+- The `expansion_progress` row is created at action start with `status: "streaming"`; transitions to `"done"` when the stream closes; to `"failed"` on error.
+- Committed UI state on the previous page is just a local Svelte state flag — no server round-trip needed for the initial commit feedback.
+
+## Predictive text prefetch (click-into-nowhere)
+
+When a location's options include unresolved-target slugs (the `create_location` path), the text for those expansions is prefetched in parallel with the user's reading time. Whichever option the user picks is already in the DB when they click; navigation feels instant.
+
+### What gets prefetched
+
+On page render for location L with options `[O1, O2, O3]`:
+
+1. Identify options whose `target` doesn't resolve to an existing entity in the current branch.
+2. Cap 3 prefetches per page visit (top 3 in option order, or by authored `prefetch_priority` if set).
+3. Kick off `ctx.scheduler.runAfter(0, internal.expansion.prefetchExpansion, { location_id, option_index, hint: option.label, world_id, character_id })` for each.
+4. Each prefetch does: `checkBudgetOrThrow` → Opus call (non-streaming; prefetch is background) → validate → insert draft entity with `{ draft: true, expanded_from_entity_id: L, visited_at: null }`.
+5. Prefetch is **silent**. No UI change until the user clicks one of the options.
+
+### Click-time resolution
+
+When the user picks option `O2`:
+
+- **Draft exists + ready:** `applyOption` resolves the slug, navigates, sets `visited_at: now`. Transition is essentially instant.
+- **Draft exists + still generating:** fall through to the streaming UX above, but the call is already 3-6s in — total perceived wait drops from 8s to 2-3s. If the prefetch was streaming, the client reconnects to the in-flight stream rather than kicking a new one.
+- **Draft doesn't exist** (prefetch skipped or budget-disabled): normal expansion path with streaming.
+
+### Pre-committed pending drafts
+
+A prefetched draft is `draft: true, visited_at: null`. This invariant carries the "pre-committed pending" meaning:
+
+- **Not counted in journeys.** The journey tracker uses `visited_at != null` as the visit signal. Prefetched-but-never-picked doesn't appear in the author's journey accumulator.
+- **Author-only visibility** per isolation rule 22a — Mara's prefetches are Mara's drafts, invisible to Jason even if Jason later visits the same parent location (Jason's prefetches fire separately, against his own visit context).
+- **Persisted until swept.** If the user returns to L and picks O2 two days later, the prefetched draft is still there — instant. If never picked within 30 days, mark-sweep GC reclaims.
+
+### Guardrails
+
+- **Budget-aware.** `checkBudgetOrThrow` runs on prefetch the same as on user-triggered calls. When the world or user cap is near, prefetch silently disables. User-triggered clicks still succeed (they get normal expansion).
+- **Per-character toggle.** `characters.prefer_prefetch: v.optional(v.boolean())` — default `true` for adults, `false` for minors (to preserve their daily caps).
+- **Per-location opt-out.** Location frontmatter `prefetch: false` disables for that location's options. Useful for ritual / gating scenes where the AI shouldn't speculate.
+- **Max 3 per page** to cap runaway cost on option-dense locations.
+
+### Invalidation
+
+- **Era advance:** pending prefetches for the branch are canceled (scheduler aborts where possible; any `{ draft: true, visited_at: null }` drafts with `created_at < era_transition_ts` are marked orphaned and swept promptly).
+- **Parent location edited mid-prefetch:** prefetch's context may be stale. Accept — the draft is still playable; next prefetch after the edit picks up new context.
+- **Budget exhausted mid-prefetch:** the scheduled action's `checkBudgetOrThrow` throws `BudgetExceeded`; the prefetch silently fails with `status: "failed"`, no draft inserted. User click falls through to normal expansion (which will also hit the budget and show the friendly cap message).
+
+### Cost
+
+Refined estimate: family session visits ~15 locations; maybe 3-4 have unresolved-target options; avg 1-2 prefetches each → ~5 prefetches/session. At ~$0.02 per cached-bible expansion: **~$0.10/session, ~$0.30/week**. Worst case (every page has 3 unresolved-target options, family visits 20 locations): ~$0.80/week. Well within family budget.
+
+Opt-out toggle available but not the default.
+
+### Scope — what doesn't prefetch
+
+- **Free-text input** — can't prefetch unknown input. Streaming UX on submit.
+- **Art** — art stays user-click-only (eye icon). Speculative art gen is not spec'd.
+- **Modules (Wave 2+)** — module step handlers don't prefetch; their computation is bespoke per click.
 
 ## World bible prompt caching
 
