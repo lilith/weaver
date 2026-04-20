@@ -8,6 +8,13 @@ import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { resolveMember } from "./sessions.js";
 import { recordJourneyTransition } from "./journeys.js";
 import { advanceWorldTime, evalCondition } from "@weaver/engine/clock";
+import type { Effect } from "@weaver/engine/effects";
+import {
+  applyEffects,
+  resolveEffectFlags,
+  type EffectExecCtx,
+} from "./effects.js";
+import { internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 async function readAuthoredPayload<T>(
@@ -195,21 +202,31 @@ export const applyOption = mutation({
     state.this ??= {};
     state.this[payload.slug] ??= {};
     const thisScope = state.this[payload.slug] as Record<string, unknown>;
-    const says: string[] = [];
-    let gotoSlug: string | null = option.target ?? null;
-
-    for (const eff of option.effect ?? []) {
-      if (eff.kind === "say") says.push(String(eff.text));
-      else if (eff.kind === "goto") gotoSlug = String(eff.target);
-      else if (eff.kind === "inc") {
-        const path = String(eff.path);
-        const by = Number(eff.by);
-        applyNumericMutation(state, thisScope, path, (n) => n + by);
-      } else if (eff.kind === "set") {
-        const path = String(eff.path);
-        applyScalarMutation(state, thisScope, path, eff.value);
-      }
+    const flags = await resolveEffectFlags(ctx, world_id, user_id);
+    const exec: EffectExecCtx = {
+      world_id,
+      branch_id,
+      user_id,
+      character_id: character._id,
+      state,
+      thisScope,
+      location_slug: payload.slug,
+      says: [],
+      gotoSlug: option.target ?? null,
+      extra_minutes: 0,
+      pending: [],
+      flags,
+    };
+    // Also flush any pending_says from prior async narrate effects. These
+    // were stamped onto character.state.pending_says by effects.runNarrate.
+    const pending = (state.pending_says as string[] | undefined) ?? [];
+    if (pending.length > 0) {
+      exec.says.push(...pending);
+      state.pending_says = [];
     }
+    await applyEffects(ctx, (option.effect ?? []) as Effect[], exec);
+    const says = exec.says;
+    const gotoSlug = exec.gotoSlug;
 
     let newLocationSlug: string | null = null;
     let newLocationEntity: Doc<"entities"> | null = null;
@@ -277,10 +294,17 @@ export const applyOption = mutation({
       updated_at: Date.now(),
     });
 
-    // Advance the world clock one tick per option taken. Biome
-    // time_dilation (Ask 1) will compose here later; Wave-2 MVP uses 1.
+    // Advance the world clock one tick per option taken, plus any
+    // extra minutes from advance_time effects. Biome time_dilation
+    // (Ask 1, phase 6) composes here when flag.biome_rules is on.
     if (branchRow?.state?.time) {
-      const next = advanceWorldTime(branchRow.state.time as any, 1, 1);
+      let next = advanceWorldTime(branchRow.state.time as any, 1, 1);
+      if (exec.extra_minutes > 0) {
+        // Second pass at 1 min/tick for the extra budget.
+        const tmp = { ...next, tick_minutes: 1 };
+        next = advanceWorldTime(tmp, exec.extra_minutes, 1);
+        next.tick_minutes = (branchRow.state.time as any).tick_minutes;
+      }
       await ctx.db.patch(branch_id, {
         state: {
           ...branchRow.state,
@@ -288,6 +312,22 @@ export const applyOption = mutation({
           turn: ((branchRow.state as any)?.turn ?? 0) + 1,
         },
       });
+    }
+
+    // Schedule pending async effects (narrate, flow_start). These run
+    // after the mutation commits; their text lands on the next look.
+    for (const p of exec.pending) {
+      if (p.kind === "narrate") {
+        await ctx.scheduler.runAfter(0, internal.effects.runNarrate, {
+          world_id,
+          branch_id,
+          character_id: character._id,
+          prompt: p.payload.prompt,
+          salience: p.payload.salience,
+          memory_event_type: p.payload.memory_event_type,
+        });
+      }
+      // flow_start deferred until flow runtime lands.
     }
 
     return {
@@ -300,32 +340,7 @@ export const applyOption = mutation({
   },
 });
 
-function applyNumericMutation(
-  state: Record<string, unknown>,
-  thisScope: Record<string, unknown>,
-  path: string,
-  f: (n: number) => number,
-) {
-  if (path.startsWith("this.")) {
-    const key = path.slice(5);
-    const prev = Number(thisScope[key] ?? 0);
-    thisScope[key] = f(prev);
-  } else if (path.startsWith("character.")) {
-    const key = path.slice(10);
-    const prev = Number((state as Record<string, unknown>)[key] ?? 0);
-    (state as Record<string, unknown>)[key] = f(prev);
-  }
-}
-
-function applyScalarMutation(
-  state: Record<string, unknown>,
-  thisScope: Record<string, unknown>,
-  path: string,
-  value: unknown,
-) {
-  if (path.startsWith("this.")) thisScope[path.slice(5)] = value;
-  else if (path.startsWith("character.")) state[path.slice(10)] = value;
-}
+// (state mutation helpers moved to convex/effects.ts)
 
 /**
  * Pin a dreamed location to the shared map. Flips the entity's
