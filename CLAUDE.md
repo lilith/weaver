@@ -180,6 +180,8 @@ npx convex env set KEY value         # for server-side (Convex actions)
 
 Never edit `convex/_generated/` by hand — regenerated on every `convex dev`.
 
+**`scripts/weaver.mjs` — the agent CLI.** Non-interactive, one-shot-per-invocation, LLM-optimized. Build/explore your own sandbox world (author mode: full rwx) or read-only inspect someone else's world with narrow non-destructive fix caps (observer mode, auto-detected from world ownership). Supports the full play loop + clock fast-forward + direct state mutation + hidden-option dry-run (the UX-01 inspection surface the browser can't show). Back-plane lives in `convex/cli.ts`. Usage: `node scripts/weaver.mjs help`. Session persisted to `~/.weaver-cli.json`. Use it before driving the browser when the question is "does this feel LitRPG-y / fun / coherent" — it's an order of magnitude faster than Playwright for that loop.
+
 ## Key behavioral rules for future sessions
 
 These override defaults and reflect hard-earned preferences:

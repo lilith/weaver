@@ -1,0 +1,938 @@
+#!/usr/bin/env node
+// scripts/weaver.mjs — non-interactive CLI for driving Weaver from an LLM
+// tool-call loop. One subcommand per invocation; output structured and
+// predictable; --json everywhere for machine reads.
+//
+// Modes (auto-detected from world ownership on `world use`):
+//   - author:  your own sandbox world; full rwx (weave, pick, clock, state, …)
+//   - observer: someone else's world; read + narrow fix caps only
+//                (look, where, entity show, cost, bible, fix)
+//
+// Session state persisted to ~/.weaver-cli.json — override with
+// WEAVER_CLI_CONFIG=/path.
+//
+// Usage:
+//   weaver login <email>                 sign in, cache session_token
+//   weaver whoami                        show who/which world/which mode
+//   weaver worlds                        list worlds you're a member of
+//   weaver world use <slug>              set current world; detect mode
+//   weaver world create <name> [flags]   create a sandbox world (author mode)
+//   weaver world delete <slug>           delete owned world (author mode)
+//   weaver world import <dir>            run importer (author mode)
+//   weaver where                         compact: current loc + clock + stats
+//   weaver look [--json]                 full location dump w/ hidden options
+//   weaver go <loc_slug>                 teleport (author mode)
+//   weaver pick <index|label>            apply option (author mode)
+//   weaver weave "text"                  free-text expansion (author mode)
+//   weaver wait                          take a no-op tick (author mode)
+//   weaver clock                         show clock
+//   weaver clock +<delta>                advance by e.g. 30m, 2h, 1d (author)
+//   weaver clock set <dow> <hh:mm>       jump to next slot (author)
+//   weaver state                         dump character state
+//   weaver state set <path> <json>       author-mode: mutate state
+//   weaver state inc <path> <n>          author-mode: numeric delta
+//   weaver journey list                  list journeys for your character
+//   weaver journey show <id>             full journey detail
+//   weaver journey resolve <id> <slugs>  save selected drafts
+//   weaver journey dismiss <id>          hide journey from journal
+//   weaver entity list [--type T]        list entities
+//   weaver entity show <type> <slug>     full payload
+//   weaver entity versions <entity_id>   edit history
+//   weaver bible [--full]                world bible (truncated by default)
+//   weaver cost                          7-day cost summary
+//   weaver fix <type> <slug> <field> <json>   non-destructive edit (member)
+//   weaver help [command]
+//
+// Global flags: --json (machine output), --world <slug> (override current),
+// --url <convex-url> (override PUBLIC_CONVEX_URL).
+
+import { ConvexHttpClient } from "convex/browser";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
+import "dotenv/config";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const { api } = await import(resolve(HERE, "../convex/_generated/api.js"));
+// Ref helper: "cli.getOwnership" -> api.cli.getOwnership. Keeps call
+// sites readable while using typed FunctionReferences under the hood.
+function ref(path) {
+  return path.split(".").reduce((o, k) => o[k], api);
+}
+
+// ---------------------------------------------------------------
+// Config + CLI argv
+
+const CONFIG_PATH =
+  process.env.WEAVER_CLI_CONFIG ?? join(homedir(), ".weaver-cli.json");
+
+function loadConfig() {
+  if (!existsSync(CONFIG_PATH)) return {};
+  try {
+    return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+function saveConfig(cfg) {
+  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+
+const argv = process.argv.slice(2);
+const flags = { json: false, help: false, world: null, url: null, full: false, limit: null, type: null };
+const positional = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === "--json") flags.json = true;
+  else if (a === "--help" || a === "-h") flags.help = true;
+  else if (a === "--full") flags.full = true;
+  else if (a === "--world") flags.world = argv[++i];
+  else if (a === "--url") flags.url = argv[++i];
+  else if (a === "--limit") flags.limit = parseInt(argv[++i], 10);
+  else if (a === "--type") flags.type = argv[++i];
+  else positional.push(a);
+}
+
+if (positional.length === 0 || flags.help && positional.length === 0) {
+  usage();
+  process.exit(positional.length === 0 ? 2 : 0);
+}
+
+const [cmd, ...rest] = positional;
+const cfg = loadConfig();
+
+// ---------------------------------------------------------------
+// Output helpers
+
+function out(obj, textRender) {
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+    return;
+  }
+  if (typeof textRender === "function") {
+    const txt = textRender(obj);
+    if (txt !== null && txt !== undefined) process.stdout.write(txt + "\n");
+    return;
+  }
+  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+}
+function err(msg, code = 1) {
+  process.stderr.write(`error: ${msg}\n`);
+  process.exit(code);
+}
+function die(e, code = 1) {
+  const m = e?.message ?? String(e);
+  // Convex errors are wrapped in boilerplate. Pull out the useful bit:
+  // prefer the last "Error: <msg>" line, strip request id + stack frames.
+  let cleaned = m
+    .replace(/^\[CONVEX[^\]]+\]\s*/g, "")
+    .replace(/\s+Called by client$/, "");
+  const errMatch = cleaned.match(/(?:Uncaught )?Error:\s*([^\n]+)/);
+  if (errMatch) cleaned = errMatch[1];
+  cleaned = cleaned
+    .split("\n")
+    .filter((l) => !/^\s*at\s/.test(l))
+    .filter((l) => !/^\[Request ID:/.test(l))
+    .join("\n")
+    .trim();
+  process.stderr.write(`error: ${cleaned}\n`);
+  process.exit(code);
+}
+
+// ---------------------------------------------------------------
+// Convex client
+
+function getClient() {
+  const url =
+    flags.url ??
+    cfg.convex_url ??
+    process.env.PUBLIC_CONVEX_URL ??
+    process.env.CONVEX_URL;
+  if (!url) err("PUBLIC_CONVEX_URL missing — set it in .env or pass --url", 2);
+  return new ConvexHttpClient(url);
+}
+function needSession() {
+  if (!cfg.session_token) err("not logged in — run: weaver login <email>", 2);
+}
+function currentWorld() {
+  const slug = flags.world ?? cfg.world_slug;
+  if (!slug) err("no current world — run: weaver world use <slug>", 2);
+  return slug;
+}
+
+// ---------------------------------------------------------------
+// Dispatch
+
+try {
+  await dispatch();
+} catch (e) {
+  die(e);
+}
+
+async function dispatch() {
+  switch (cmd) {
+    case "help":
+      return usage(rest[0]);
+    case "login":
+      return cmdLogin(rest);
+    case "logout":
+      return cmdLogout();
+    case "whoami":
+      return cmdWhoami();
+    case "worlds":
+      return cmdWorlds();
+    case "world":
+      return cmdWorld(rest);
+    case "char":
+      return cmdChar(rest);
+    case "where":
+      return cmdWhere();
+    case "look":
+      return cmdLook(rest);
+    case "go":
+      return cmdGo(rest);
+    case "pick":
+      return cmdPick(rest);
+    case "weave":
+      return cmdWeave(rest);
+    case "wait":
+      return cmdWait();
+    case "clock":
+      return cmdClock(rest);
+    case "state":
+      return cmdState(rest);
+    case "journey":
+      return cmdJourney(rest);
+    case "entity":
+      return cmdEntity(rest);
+    case "bible":
+      return cmdBible();
+    case "cost":
+      return cmdCost();
+    case "fix":
+      return cmdFix(rest);
+    default:
+      err(`unknown command: ${cmd}. run: weaver help`);
+  }
+}
+
+// ---------------------------------------------------------------
+// Commands: session
+
+async function cmdLogin([email]) {
+  if (!email) err("usage: weaver login <email>", 2);
+  const client = getClient();
+  const { session_token, user_id } = await client.action(ref("_dev.devSignInAs"), {
+    email,
+  });
+  const next = {
+    ...cfg,
+    session_token,
+    user_id,
+    email,
+    convex_url: flags.url ?? cfg.convex_url ?? process.env.PUBLIC_CONVEX_URL,
+  };
+  saveConfig(next);
+  out(
+    { email, user_id, config_path: CONFIG_PATH },
+    (o) => `logged in as ${o.email} (user_id=${o.user_id})`,
+  );
+}
+
+function cmdLogout() {
+  const next = { ...cfg };
+  delete next.session_token;
+  delete next.user_id;
+  delete next.email;
+  delete next.world_slug;
+  delete next.world_id;
+  delete next.mode;
+  saveConfig(next);
+  out({ ok: true }, () => "logged out");
+}
+
+async function cmdWhoami() {
+  if (!cfg.session_token)
+    return out({ logged_in: false }, () => "not logged in");
+  const base = {
+    logged_in: true,
+    email: cfg.email,
+    user_id: cfg.user_id,
+    world_slug: cfg.world_slug ?? null,
+    world_name: cfg.world_name ?? null,
+    mode: cfg.mode ?? null,
+    convex_url: cfg.convex_url,
+  };
+  out(
+    base,
+    (o) =>
+      `email=${o.email}  user_id=${o.user_id}\n` +
+      `world=${o.world_slug ?? "(none)"}  mode=${o.mode ?? "-"}\n` +
+      `convex=${o.convex_url}`,
+  );
+}
+
+// ---------------------------------------------------------------
+// Commands: worlds
+
+async function cmdWorlds() {
+  needSession();
+  const client = getClient();
+  const worlds = await client.query(ref("worlds.listMine"), {
+    session_token: cfg.session_token,
+  });
+  out(worlds, (ws) =>
+    ws.length === 0
+      ? "(no worlds)"
+      : ws
+          .map(
+            (w) =>
+              `${w.slug.padEnd(28)} ${w.role.padEnd(10)} ${w.name}  (${w.visited_count}/${w.location_count} visited)`,
+          )
+          .join("\n"),
+  );
+}
+
+async function cmdWorld([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  if (sub === "use") {
+    const [slug] = a;
+    if (!slug) err("usage: weaver world use <slug>", 2);
+    const own = await client.query(ref("cli.getOwnership"), {
+      session_token: cfg.session_token,
+      world_slug: slug,
+    });
+    const mode = own.is_owner ? "author" : "observer";
+    saveConfig({
+      ...cfg,
+      world_slug: own.world_slug,
+      world_id: own.world_id,
+      world_name: own.world_name,
+      mode,
+    });
+    out(
+      { ...own, mode },
+      (o) =>
+        `using ${o.world_slug} (${o.world_name}) — mode=${mode}, role=${o.role}`,
+    );
+  } else if (sub === "create") {
+    const [name, ...more] = a;
+    if (!name) err("usage: weaver world create <name>", 2);
+    const ratingIdx = more.indexOf("--rating");
+    const suffixIdx = more.indexOf("--slug");
+    const charIdx = more.indexOf("--character");
+    const rating = ratingIdx >= 0 ? more[ratingIdx + 1] : undefined;
+    const slug_suffix = suffixIdx >= 0 ? more[suffixIdx + 1] : undefined;
+    const character_name = charIdx >= 0 ? more[charIdx + 1] : undefined;
+    const r = await client.mutation(ref("cli.createSandboxWorld"), {
+      session_token: cfg.session_token,
+      name,
+      slug_suffix,
+      content_rating: rating,
+      character_name,
+    });
+    // Auto-switch into it.
+    saveConfig({
+      ...cfg,
+      world_slug: r.slug,
+      world_id: r.world_id,
+      world_name: name,
+      mode: "author",
+    });
+    out(
+      r,
+      (o) => `created ${o.slug} (world_id=${o.world_id}) — now in author mode`,
+    );
+  } else if (sub === "delete") {
+    const [slug, confirm] = a;
+    if (!slug) err("usage: weaver world delete <slug> --yes", 2);
+    if (confirm !== "--yes")
+      err("destructive: append --yes to confirm", 2);
+    // Use the existing _dev mutation. Requires convex admin token via npx
+    // convex run OR the caller is owner. We call via `_dev:deleteWorld` as
+    // an internalMutation, which has to be run via `npx convex run`.
+    const r = spawnSync(
+      "npx",
+      [
+        "convex",
+        "run",
+        "_dev:deleteWorld",
+        JSON.stringify({ world_slug: slug, confirm: "yes-delete-please" }),
+      ],
+      { cwd: resolve(import.meta.dirname, ".."), encoding: "utf-8" },
+    );
+    if (r.status !== 0)
+      err(`convex run failed: ${r.stderr || r.stdout}`, r.status ?? 1);
+    // If this was the current world, clear it.
+    if (cfg.world_slug === slug) {
+      saveConfig({ ...cfg, world_slug: null, world_id: null, world_name: null, mode: null });
+    }
+    out({ deleted: slug, stdout: r.stdout.trim() }, (o) => `deleted ${o.deleted}\n${o.stdout}`);
+  } else if (sub === "import") {
+    const [dir, ...more] = a;
+    if (!dir) err("usage: weaver world import <dir> [--character N] [--rating R]", 2);
+    const importScript = resolve(import.meta.dirname, "import-world.mjs");
+    const env = {
+      ...process.env,
+      WEAVER_SESSION_TOKEN: cfg.session_token,
+      PUBLIC_CONVEX_URL: cfg.convex_url ?? process.env.PUBLIC_CONVEX_URL,
+    };
+    const r = spawnSync("node", [importScript, dir, ...more], {
+      env,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (r.status !== 0)
+      err(`import failed: ${r.stderr || r.stdout}`, r.status ?? 1);
+    out(
+      { ok: true, stdout: r.stdout.trim() },
+      (o) => o.stdout,
+    );
+  } else {
+    err("usage: weaver world use|create|delete|import ...", 2);
+  }
+}
+
+// ---------------------------------------------------------------
+// Commands: char
+
+async function cmdChar([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "show") {
+    const info = await client.query(ref("cli.whereAmI"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    out(
+      info,
+      (o) =>
+        o.character
+          ? `name=${o.character.name}  pseudonym=${o.character.pseudonym}\nat=${o.character.current_location_slug ?? "-"}\nstate=${JSON.stringify(o.character.state ?? {})}`
+          : "(no character in this world for you)",
+    );
+  } else {
+    err("usage: weaver char show", 2);
+  }
+}
+
+// ---------------------------------------------------------------
+// Commands: where / look / navigate / play
+
+async function cmdWhere() {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  const info = await client.query(ref("cli.whereAmI"), {
+    session_token: cfg.session_token,
+    world_slug,
+  });
+  out(info, renderWhere);
+}
+
+function renderWhere(info) {
+  const t = info.branch?.state?.time;
+  const tstr = t
+    ? `${t.day_of_week} ${t.hhmm}  (day ${t.day_counter}, week ${t.week_counter})`
+    : "-";
+  const ch = info.character;
+  const stateStr = ch?.state
+    ? Object.entries(ch.state)
+        .filter(([k]) => k !== "this")
+        .map(([k, v]) => `${k}=${summarizeValue(v)}`)
+        .join(" ")
+    : "-";
+  return [
+    `world=${info.world.slug}  ${info.is_owner ? "[author]" : "[observer]"}`,
+    `loc=${ch?.current_location_slug ?? "-"}  turn=${info.branch?.state?.turn ?? 0}  time=${tstr}`,
+    `char=${ch?.name ?? "-"}  ${stateStr}`,
+  ].join("\n");
+}
+
+function summarizeValue(v) {
+  if (Array.isArray(v)) return `[${v.length}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).length}}`;
+  return JSON.stringify(v);
+}
+
+async function cmdLook([maybeSlug]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  // Determine current loc if not provided.
+  let loc_slug = maybeSlug;
+  if (!loc_slug) {
+    const info = await client.query(ref("cli.whereAmI"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    loc_slug = info.character?.current_location_slug;
+    if (!loc_slug) err("character has no current location", 1);
+  }
+  const dump = await client.query(ref("cli.dumpLocation"), {
+    session_token: cfg.session_token,
+    world_slug,
+    loc_slug,
+  });
+  if (!dump) err(`location not found: ${loc_slug}`, 3);
+  out(dump, renderLook);
+}
+
+function renderLook(d) {
+  const lines = [];
+  lines.push(
+    `[${d.slug}]  ${d.name ?? ""}  ${d.draft ? "(DRAFT)" : ""}`.trim(),
+  );
+  lines.push(`biome=${d.biome ?? "-"}  tags=${(d.tags ?? []).join(",") || "-"}  author=${d.author_pseudonym ?? "-"}`);
+  if (d.prose) lines.push(`\n${d.prose}`);
+  else if (d.description_template)
+    lines.push(`\n${d.description_template}`);
+  lines.push("");
+  lines.push("options:");
+  for (const o of d.options) {
+    const mark = o.visible ? " " : "x";
+    const tag = o.target ? ` → ${o.target}` : "";
+    const cond = o.condition ? `   if: ${o.condition}` : "";
+    lines.push(`  [${mark}] ${o.index}. ${o.label}${tag}${cond}`);
+  }
+  const t = d.world_state?.time;
+  if (t)
+    lines.push(
+      `\nworld: ${t.day_of_week} ${t.hhmm}  day ${t.day_counter}`,
+    );
+  return lines.join("\n");
+}
+
+async function cmdGo([slug]) {
+  needSession();
+  if (!slug) err("usage: weaver go <loc_slug>", 2);
+  if (cfg.mode !== "author")
+    err("observer mode: go is author-only. weaver world use <your-slug>", 2);
+  const client = getClient();
+  const r = await client.mutation(ref("cli.teleportCharacter"), {
+    session_token: cfg.session_token,
+    world_slug: currentWorld(),
+    loc_slug: slug,
+  });
+  out(r, (o) => `teleported to ${o.loc_slug}`);
+}
+
+async function cmdPick([arg]) {
+  needSession();
+  if (!arg) err("usage: weaver pick <index|label-substring>", 2);
+  if (cfg.mode !== "author")
+    err("observer mode: pick is author-only", 2);
+  const client = getClient();
+  const world_slug = currentWorld();
+  const info = await client.query(ref("cli.whereAmI"), {
+    session_token: cfg.session_token,
+    world_slug,
+  });
+  const loc_slug = info.character?.current_location_slug;
+  if (!loc_slug) err("character has no current location", 1);
+  const dump = await client.query(ref("cli.dumpLocation"), {
+    session_token: cfg.session_token,
+    world_slug,
+    loc_slug,
+  });
+  // Resolve the arg: number = original index; else substring match on visible options.
+  let optionIndex = null;
+  const asInt = parseInt(arg, 10);
+  if (!isNaN(asInt) && String(asInt) === arg) {
+    optionIndex = asInt;
+  } else {
+    const match = dump.options.find(
+      (o) => o.visible && o.label.toLowerCase().includes(arg.toLowerCase()),
+    );
+    if (!match) err(`no visible option matches: ${arg}`, 1);
+    optionIndex = match.index;
+  }
+  const r = await client.mutation(ref("locations.applyOption"), {
+    session_token: cfg.session_token,
+    world_id: cfg.world_id,
+    location_slug: loc_slug,
+    option_index: optionIndex,
+  });
+  // If needs_expansion: auto-chain.
+  if (r.needs_expansion) {
+    const ex = await client.action(ref("expansion.expandFromFreeText"), {
+      session_token: cfg.session_token,
+      world_id: cfg.world_id,
+      location_slug: loc_slug,
+      input: r.needs_expansion.hint,
+    });
+    r.expansion = ex;
+  }
+  out(
+    r,
+    (o) =>
+      `${(o.says ?? []).map((s) => `  "${s}"`).join("\n") || "  (no dialogue)"}\n` +
+      `→ ${o.new_location_slug ?? "(same location)"}${o.needs_expansion ? "  [expanded]" : ""}${o.closed_journey_id ? `  [journey ${o.closed_journey_id} closed]` : ""}`,
+  );
+}
+
+async function cmdWeave([text]) {
+  needSession();
+  if (!text) err('usage: weaver weave "free text"', 2);
+  if (cfg.mode !== "author")
+    err("observer mode: weave is author-only", 2);
+  const client = getClient();
+  const world_slug = currentWorld();
+  const info = await client.query(ref("cli.whereAmI"), {
+    session_token: cfg.session_token,
+    world_slug,
+  });
+  const loc_slug = info.character?.current_location_slug;
+  if (!loc_slug) err("character has no current location", 1);
+  const r = await client.action(ref("expansion.expandFromFreeText"), {
+    session_token: cfg.session_token,
+    world_id: cfg.world_id,
+    location_slug: loc_slug,
+    input: text,
+  });
+  out(r, (o) => {
+    if (o.kind === "goto") return `wove → ${o.new_location_slug}`;
+    if (o.kind === "narrate") return `"${o.text}"`;
+    return JSON.stringify(o);
+  });
+}
+
+async function cmdWait() {
+  needSession();
+  if (cfg.mode !== "author") err("observer mode: wait is author-only", 2);
+  // Advance the clock by one tick's worth of minutes without triggering
+  // an option. Preferred path: a real "wait" option in the location if
+  // one exists (UX-03); fallback: fastForwardClock by tick_minutes.
+  const client = getClient();
+  const world_slug = currentWorld();
+  const info = await client.query(ref("cli.whereAmI"), {
+    session_token: cfg.session_token,
+    world_slug,
+  });
+  const tick = info.branch?.state?.time?.tick_minutes ?? 1;
+  const r = await client.mutation(ref("cli.fastForwardClock"), {
+    session_token: cfg.session_token,
+    world_slug,
+    delta_minutes: tick,
+    tick_turn_counter: true,
+  });
+  out(r, (o) => `waited ${o.minutes_added}m → ${o.time.day_of_week} ${o.time.hhmm}`);
+}
+
+// ---------------------------------------------------------------
+// Commands: clock
+
+async function cmdClock([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub) {
+    const info = await client.query(ref("cli.whereAmI"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    const t = info.branch?.state?.time;
+    return out(t ?? {}, () =>
+      t ? `${t.day_of_week} ${t.hhmm}  day ${t.day_counter}  week ${t.week_counter}  tick=${t.tick_minutes}m` : "(no clock)",
+    );
+  }
+  if (cfg.mode !== "author") err("observer mode: clock mutation is author-only", 2);
+  if (sub.startsWith("+")) {
+    const delta_minutes = parseDuration(sub.slice(1));
+    const r = await client.mutation(ref("cli.fastForwardClock"), {
+      session_token: cfg.session_token,
+      world_slug,
+      delta_minutes,
+    });
+    return out(r, (o) => `clock +${o.minutes_added}m → ${o.time.day_of_week} ${o.time.hhmm}`);
+  }
+  if (sub === "set") {
+    const [dow, hhmm] = a;
+    if (!dow || !hhmm) err("usage: weaver clock set <dow> <hh:mm>", 2);
+    const r = await client.mutation(ref("cli.fastForwardClock"), {
+      session_token: cfg.session_token,
+      world_slug,
+      to_day_of_week: dow,
+      to_hhmm: hhmm,
+    });
+    return out(r, (o) => `clock → ${o.time.day_of_week} ${o.time.hhmm} (+${o.minutes_added}m)`);
+  }
+  err("usage: weaver clock [+<delta>|set <dow> <hh:mm>]", 2);
+}
+
+function parseDuration(s) {
+  const m = /^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)?$/i.exec(s.trim());
+  if (!m) err(`bad duration: ${s} (try 30m, 2h, 1d)`, 2);
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] ?? "m").toLowerCase();
+  if (unit.startsWith("s")) return Math.max(1, Math.round(n / 60));
+  if (unit.startsWith("h")) return n * 60;
+  if (unit.startsWith("d")) return n * 24 * 60;
+  return n;
+}
+
+// ---------------------------------------------------------------
+// Commands: state
+
+async function cmdState([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub) {
+    const info = await client.query(ref("cli.whereAmI"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    return out(info.character?.state ?? {}, (s) => JSON.stringify(s, null, 2));
+  }
+  if (cfg.mode !== "author") err("observer mode: state mutation is author-only", 2);
+  if (sub === "set") {
+    const [path, ...valParts] = a;
+    if (!path || valParts.length === 0)
+      err("usage: weaver state set <path> <json-value>", 2);
+    const value_json = valParts.join(" ");
+    const r = await client.mutation(ref("cli.setCharacterState"), {
+      session_token: cfg.session_token,
+      world_slug,
+      path,
+      value_json,
+    });
+    return out(r, (o) => `set ${o.path} = ${JSON.stringify(o.value)}`);
+  }
+  if (sub === "inc") {
+    const [path, byStr] = a;
+    if (!path || !byStr) err("usage: weaver state inc <path> <n>", 2);
+    // Read current, compute, write.
+    const info = await client.query(ref("cli.whereAmI"), {
+      session_token: cfg.session_token,
+      world_slug,
+    });
+    const cur = getDeep(info.character?.state ?? {}, path);
+    const n = Number(cur ?? 0) + Number(byStr);
+    const r = await client.mutation(ref("cli.setCharacterState"), {
+      session_token: cfg.session_token,
+      world_slug,
+      path,
+      value_json: JSON.stringify(n),
+    });
+    return out(r, (o) => `${o.path}: ${cur ?? 0} → ${o.value}`);
+  }
+  err("usage: weaver state [set <path> <json>|inc <path> <n>]", 2);
+}
+
+function getDeep(obj, path) {
+  return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+
+// ---------------------------------------------------------------
+// Commands: journey
+
+async function cmdJourney([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "list") {
+    const rows = await client.query(ref("journeys.listMineInWorld"), {
+      session_token: cfg.session_token,
+      world_id: cfg.world_id,
+    });
+    return out(rows, (rs) =>
+      rs.length === 0
+        ? "(no journeys)"
+        : rs
+            .map(
+              (j) =>
+                `${j._id}  ${j.status.padEnd(10)}  ${j.entity_slugs.length} drafts  ${j.summary ?? ""}`,
+            )
+            .join("\n"),
+    );
+  }
+  if (sub === "show") {
+    const [id] = a;
+    if (!id) err("usage: weaver journey show <id>", 2);
+    const j = await client.query(ref("journeys.getJourney"), {
+      session_token: cfg.session_token,
+      journey_id: id,
+    });
+    return out(j);
+  }
+  if (sub === "resolve") {
+    if (cfg.mode !== "author") err("observer mode: resolve is author-only", 2);
+    const [id, slugs] = a;
+    if (!id || !slugs)
+      err("usage: weaver journey resolve <id> slug1,slug2,...", 2);
+    const keep = slugs
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const r = await client.mutation(ref("journeys.resolveJourney"), {
+      session_token: cfg.session_token,
+      journey_id: id,
+      keep_slugs: keep,
+    });
+    return out(r, (o) => `saved=${o.saved}  skipped=${o.skipped}`);
+  }
+  if (sub === "dismiss") {
+    if (cfg.mode !== "author") err("observer mode: dismiss is author-only", 2);
+    const [id] = a;
+    if (!id) err("usage: weaver journey dismiss <id>", 2);
+    const r = await client.mutation(ref("journeys.dismissJourney"), {
+      session_token: cfg.session_token,
+      journey_id: id,
+    });
+    return out(r, () => "dismissed");
+  }
+  err("usage: weaver journey list|show|resolve|dismiss ...", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: entity
+
+async function cmdEntity([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  if (!sub || sub === "list") {
+    const rows = await client.query(ref("cli.listEntities"), {
+      session_token: cfg.session_token,
+      world_slug,
+      type: flags.type ?? undefined,
+      limit: flags.limit ?? undefined,
+    });
+    return out(rows, (rs) =>
+      rs.length === 0
+        ? "(no entities)"
+        : rs
+            .map(
+              (e) =>
+                `${e.type.padEnd(10)} ${e.slug.padEnd(32)} v${e.version}${e.draft ? " (draft)" : ""}${e.art_status ? ` [art:${e.art_status}]` : ""}`,
+            )
+            .join("\n"),
+    );
+  }
+  if (sub === "show") {
+    const [type, slug] = a;
+    if (!type || !slug) err("usage: weaver entity show <type> <slug>", 2);
+    const e = await client.query(ref("cli.getEntity"), {
+      session_token: cfg.session_token,
+      world_slug,
+      type,
+      slug,
+    });
+    if (!e) err(`entity not found: ${type}/${slug}`, 3);
+    return out(e, (o) => JSON.stringify(o.payload, null, 2));
+  }
+  if (sub === "versions") {
+    const [entity_id] = a;
+    if (!entity_id) err("usage: weaver entity versions <entity_id>", 2);
+    const rows = await client.query(ref("cli.listVersions"), {
+      session_token: cfg.session_token,
+      world_slug,
+      entity_id,
+    });
+    if (!rows) err("entity not found or wrong world", 3);
+    return out(rows, (rs) =>
+      rs
+        .map(
+          (v) =>
+            `v${v.version}  ${v.edit_kind.padEnd(20)}  ${v.author_pseudonym ?? "-"}  ${v.reason ?? ""}`,
+        )
+        .join("\n"),
+    );
+  }
+  err("usage: weaver entity list|show|versions ...", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: bible, cost, fix
+
+async function cmdBible() {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  const bible = await client.query(ref("worlds.getBible"), {
+    session_token: cfg.session_token,
+    world_id: cfg.world_id,
+  });
+  if (!bible) err("world has no bible yet", 3);
+  if (flags.json || flags.full) return out(bible);
+  // Truncate for plain-text output.
+  const str = JSON.stringify(bible, null, 2);
+  const truncated = str.length > 2500 ? str.slice(0, 2500) + "\n... (truncated; --full to see all)" : str;
+  process.stdout.write(truncated + "\n");
+}
+
+async function cmdCost() {
+  needSession();
+  const client = getClient();
+  const world_slug = currentWorld();
+  const s = await client.query(ref("cli.getCostSummary"), {
+    session_token: cfg.session_token,
+    world_slug,
+  });
+  out(s, (o) => {
+    const lines = [`total=$${o.total_usd.toFixed(4)}  events=${o.count}  (last 7d)`];
+    for (const [k, v] of Object.entries(o.by_kind)) {
+      lines.push(`  ${k.padEnd(20)} ${v.count.toString().padStart(4)}  $${v.usd.toFixed(4)}`);
+    }
+    return lines.join("\n");
+  });
+}
+
+async function cmdFix([type, slug, field, ...valParts]) {
+  needSession();
+  if (!type || !slug || !field || valParts.length === 0)
+    err('usage: weaver fix <type> <slug> <field> <json-value> [--reason "..."]', 2);
+  const reasonIdx = valParts.indexOf("--reason");
+  let reason;
+  if (reasonIdx >= 0) {
+    reason = valParts[reasonIdx + 1];
+    valParts = [...valParts.slice(0, reasonIdx), ...valParts.slice(reasonIdx + 2)];
+  }
+  const new_value_json = valParts.join(" ");
+  const client = getClient();
+  const r = await client.mutation(ref("cli.fixEntityField"), {
+    session_token: cfg.session_token,
+    world_slug: currentWorld(),
+    type,
+    slug,
+    field,
+    new_value_json,
+    reason,
+  });
+  out(
+    r,
+    (o) =>
+      `fixed ${type}/${slug}.${o.field}  v${o.previous_version} → v${o.new_version}`,
+  );
+}
+
+// ---------------------------------------------------------------
+// Usage
+
+function usage(topic) {
+  const general = `
+weaver — non-interactive CLI for driving Weaver
+
+session:     login <email>  logout  whoami
+worlds:      worlds  world use <slug>  world create <name>  world delete <slug> --yes
+             world import <dir>
+inspect:     where  look [slug]  char show  bible [--full]  cost
+             entity list [--type T] [--limit N]  entity show <type> <slug>  entity versions <id>
+             journey list  journey show <id>
+play:        pick <idx|label>  weave "<text>"  go <slug>  wait  clock [+<dur>|set <dow> <hh:mm>]
+             state  state set <path> <json>  state inc <path> <n>
+             journey resolve <id> <slugs>  journey dismiss <id>
+fix:         fix <type> <slug> <field> <json> [--reason "..."]    (member-level, non-destructive)
+
+flags:       --json   structured output  --world <slug>  override current  --full  don't truncate
+             --type <type>  filter entity list  --limit N  cap results  --url <url>  override convex
+
+state persisted to ${CONFIG_PATH}
+`.trim();
+  process.stdout.write(general + "\n");
+}
