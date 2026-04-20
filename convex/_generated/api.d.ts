@@ -15,6 +15,7 @@ import type * as blobs from "../blobs.js";
 import type * as characters from "../characters.js";
 import type * as cli from "../cli.js";
 import type * as expansion from "../expansion.js";
+import type * as flags from "../flags.js";
 import type * as import_ from "../import.js";
 import type * as journeys from "../journeys.js";
 import type * as locations from "../locations.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   characters: typeof characters;
   cli: typeof cli;
   expansion: typeof expansion;
+  flags: typeof flags;
   import: typeof import_;
   journeys: typeof journeys;
   locations: typeof locations;

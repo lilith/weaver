@@ -321,6 +321,51 @@ export default defineSchema({
     ]),
 
   // ---------------------------------------------------------------
+  // Feature flags — one row per (key, scope). Resolution char→user→world→global.
+  // See packages/engine/src/flags/index.ts for the resolver.
+  feature_flags: defineTable({
+    flag_key: v.string(), // e.g. "flag.biome_rules"
+    scope_kind: v.union(
+      v.literal("character"),
+      v.literal("user"),
+      v.literal("world"),
+      v.literal("global"),
+    ),
+    // Absent for global. When scope_kind != "global" we always write a real id.
+    scope_id: v.optional(v.string()),
+    enabled: v.boolean(),
+    set_by_user_id: v.optional(v.id("users")),
+    set_at: v.number(),
+    notes: v.optional(v.string()),
+  })
+    .index("by_key_scope", ["flag_key", "scope_kind", "scope_id"])
+    .index("by_key", ["flag_key"]),
+
+  // ---------------------------------------------------------------
+  // NPC memory — spec 24 Ask 4. Rows per (npc_entity, world, branch)
+  // with salience + event_type + summary + turn count. Compaction job
+  // folds low-salience rows into weekly summaries.
+  npc_memory: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    npc_entity_id: v.id("entities"),
+    // For player-subject memories (e.g., who did the thing). Optional —
+    // initial seed entries from bible have no player.
+    about_character_id: v.optional(v.id("characters")),
+    event_type: v.string(), // "dialogue_turn", "the_player_visited", custom
+    summary: v.string(),
+    salience: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    turn: v.number(), // world-clock turn count at write
+    created_at: v.number(),
+    // When rows are compacted, the originals are deleted and a new row
+    // with is_compacted=true carries the roll-up summary.
+    is_compacted: v.optional(v.boolean()),
+  })
+    .index("by_branch_npc_turn", ["branch_id", "npc_entity_id", "turn"])
+    .index("by_branch_npc_salience", ["branch_id", "npc_entity_id", "salience"])
+    .index("by_branch_npc_event", ["branch_id", "npc_entity_id", "event_type"]),
+
+  // ---------------------------------------------------------------
   // Auth (pre-world)
   auth_tokens: defineTable({
     token_hash: v.string(),

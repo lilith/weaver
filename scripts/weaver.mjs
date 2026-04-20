@@ -213,6 +213,8 @@ async function dispatch() {
       return cmdCost();
     case "fix":
       return cmdFix(rest);
+    case "flag":
+      return cmdFlag(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -909,6 +911,84 @@ async function cmdFix([type, slug, field, ...valParts]) {
     (o) =>
       `fixed ${type}/${slug}.${o.field}  v${o.previous_version} → v${o.new_version}`,
   );
+}
+
+// ---------------------------------------------------------------
+// Commands: flag
+
+async function cmdFlag([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  if (!sub || sub === "list") {
+    const { rows, defaults } = await client.query(ref("flags.listAll"), {
+      session_token: cfg.session_token,
+    });
+    const byKey = new Map();
+    for (const r of rows) {
+      if (!byKey.has(r.flag_key)) byKey.set(r.flag_key, []);
+      byKey.get(r.flag_key).push(r);
+    }
+    const allKeys = new Set([...Object.keys(defaults), ...byKey.keys()]);
+    const listing = [...allKeys].sort().map((k) => ({
+      flag_key: k,
+      default: defaults[k] ?? false,
+      overrides: byKey.get(k) ?? [],
+    }));
+    return out(listing, (ls) =>
+      ls
+        .map((l) => {
+          const base = `${l.flag_key.padEnd(36)} default=${l.default ? "on" : "off"}`;
+          if (l.overrides.length === 0) return base;
+          const extra = l.overrides
+            .map((o) => `\n    ${o.scope_kind}${o.scope_id ? `:${o.scope_id}` : ""} = ${o.enabled ? "on" : "off"}`)
+            .join("");
+          return base + extra;
+        })
+        .join("\n"),
+    );
+  }
+  if (sub === "resolve") {
+    const [key] = a;
+    if (!key) err("usage: weaver flag resolve <key> [--world slug]", 2);
+    const r = await client.query(ref("flags.resolve"), {
+      session_token: cfg.session_token,
+      flag_key: key,
+      world_slug: flags.world ?? cfg.world_slug ?? undefined,
+    });
+    return out(r, (o) => `${o.flag_key} = ${o.enabled ? "on" : "off"} (default=${o.default})`);
+  }
+  if (sub === "set" || sub === "unset") {
+    const [key, ...more] = a;
+    if (!key) err(`usage: weaver flag ${sub} <key> [--scope world|user|character|global] [--id X] [on|off]`, 2);
+    const scopeIdx = more.indexOf("--scope");
+    const idIdx = more.indexOf("--id");
+    const scope_kind = scopeIdx >= 0 ? more[scopeIdx + 1] : "global";
+    let scope_id = idIdx >= 0 ? more[idIdx + 1] : undefined;
+    // If scope=world and no explicit id, use the current world's slug.
+    if (scope_kind === "world" && !scope_id) scope_id = cfg.world_slug;
+    if (scope_kind === "user" && !scope_id) scope_id = cfg.user_id;
+    if (sub === "set") {
+      const val = more.find((m) => m === "on" || m === "off");
+      if (!val) err("specify on|off at end", 2);
+      const r = await client.mutation(ref("flags.set"), {
+        session_token: cfg.session_token,
+        flag_key: key,
+        scope_kind,
+        scope_id,
+        enabled: val === "on",
+      });
+      return out(r, (o) => `${o.created ? "created" : "updated"} ${key} @ ${scope_kind}${scope_id ? `:${scope_id}` : ""} = ${val}`);
+    } else {
+      const r = await client.mutation(ref("flags.unset"), {
+        session_token: cfg.session_token,
+        flag_key: key,
+        scope_kind,
+        scope_id,
+      });
+      return out(r, (o) => `unset ${key} @ ${scope_kind}${scope_id ? `:${scope_id}` : ""} (deleted ${o.deleted})`);
+    }
+  }
+  err("usage: weaver flag [list|resolve|set|unset] ...", 2);
 }
 
 // ---------------------------------------------------------------
