@@ -506,3 +506,52 @@ export const appendPendingSay = internalMutation({
     await ctx.db.patch(character_id, { state, updated_at: Date.now() });
   },
 });
+
+/** Apply a list of effects in the context of a flow. Used by the
+ *  flow runtime to route step-returned effects through the central
+ *  dispatcher — damage actually decrements character.hp, give_item
+ *  actually adds to inventory, etc. */
+export const applyFlowEffects = internalMutation({
+  args: {
+    flow_id: v.id("flows"),
+    effects: v.array(v.any()),
+  },
+  handler: async (ctx, { flow_id, effects }) => {
+    const flow = await ctx.db.get(flow_id);
+    if (!flow) return { applied: 0 };
+    const character = await ctx.db.get(flow.character_id);
+    if (!character) return { applied: 0 };
+    const state = { ...(character.state ?? {}) };
+    state.this ??= {};
+    // Flows don't have a "current location" scope the same way
+    // applyOption does; pin thisScope to a floating __flow object.
+    const thisScope: Record<string, unknown> =
+      (state.this as any).__flow ?? {};
+    (state.this as any).__flow = thisScope;
+    const flags = await resolveEffectFlags(ctx, flow.world_id, character.user_id);
+    const exec: EffectExecCtx = {
+      world_id: flow.world_id,
+      branch_id: flow.branch_id,
+      user_id: character.user_id,
+      character_id: character._id,
+      state,
+      thisScope,
+      location_slug: "__flow",
+      says: [],
+      gotoSlug: null,
+      extra_minutes: 0,
+      pending: [],
+      flags,
+    };
+    await applyEffects(ctx, effects as any[], exec);
+    // Persist state + queue any accumulated pending_says for render.
+    if (exec.says.length > 0) {
+      state.pending_says = [
+        ...((state.pending_says as string[]) ?? []),
+        ...exec.says,
+      ];
+    }
+    await ctx.db.patch(character._id, { state, updated_at: Date.now() });
+    return { applied: effects.length, says_added: exec.says.length };
+  },
+});

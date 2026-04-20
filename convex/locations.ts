@@ -358,11 +358,34 @@ export const applyOption = mutation({
             await applyEffects(ctx, rules.on_turn_in_biome, exec);
           if (Array.isArray(rules.ambient_effects)) {
             const nextTurn = ((branchRow?.state as any)?.turn ?? 0) + 1;
+            // Seed a per-turn RNG so same turn + same world = same roll;
+            // makes ambient firing deterministic across re-reads / tests.
+            const rngSeed = `ambient|${branch_id}|${nextTurn}`;
+            // Small deterministic RNG (mulberry32-ish; identical shape to
+            // flows.makeSeededRng but inlined to avoid a cross-package import).
+            let h = 1779033703 ^ rngSeed.length;
+            for (let i = 0; i < rngSeed.length; i++) {
+              h = Math.imul(h ^ rngSeed.charCodeAt(i), 3432918353);
+              h = (h << 13) | (h >>> 19);
+            }
+            let rngA = h >>> 0;
+            const rng = () => {
+              rngA |= 0;
+              rngA = (rngA + 0x6d2b79f5) | 0;
+              let t = Math.imul(rngA ^ (rngA >>> 15), 1 | rngA);
+              t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+              return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
             for (const amb of rules.ambient_effects) {
               const every = Number((amb as any).every_n_turns ?? 0);
-              if (every > 0 && nextTurn % every === 0) {
-                await applyEffects(ctx, [amb as any], exec);
+              if (every <= 0 || nextTurn % every !== 0) continue;
+              // Per-effect chance gate (UX-06). `chance` omitted =
+              // deterministic 1.0 — backwards-compatible.
+              const chance = (amb as any).chance;
+              if (chance !== undefined && chance !== null) {
+                if (rng() >= Number(chance)) continue;
               }
+              await applyEffects(ctx, [amb as any], exec);
             }
           }
           if (typeof rules.time_dilation === "number" && rules.time_dilation > 0) {

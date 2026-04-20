@@ -216,7 +216,12 @@ function needSession() {
 }
 function currentWorld() {
   const slug = flags.world ?? cfg.world_slug;
-  if (!slug) err("no current world — run: weaver world use <slug>", 2);
+  if (!slug) {
+    const hint = flags.as
+      ? `no current world — when using --as, pass --world <slug>`
+      : `no current world — run: weaver world use <slug>`;
+    err(hint, 2);
+  }
   return slug;
 }
 

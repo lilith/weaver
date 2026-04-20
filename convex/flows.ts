@@ -39,10 +39,12 @@ import type { Doc, Id } from "./_generated/dataModel.js";
 // Module registry. Add new modules here.
 import { counterModule } from "./modules/counter.js";
 import { dialogueModule } from "./modules/dialogue.js";
+import { combatModule } from "./modules/combat.js";
 
 const MODULES: Record<string, ModuleDef> = {
   counter: counterModule,
   dialogue: dialogueModule,
+  combat: combatModule,
 };
 
 // --------------------------------------------------------------------
@@ -303,11 +305,15 @@ async function runStep(
     status,
     append_says: allSays,
   });
-  // Effects from the step: push through the central router by
-  // delivering them as pending_says / stash on character for the next
-  // applyOption. For v1 we just append textual effects; real effect
-  // dispatch from flows land in Phase 4.5 (combat, spawns) and will go
-  // through a dedicated internal mutation.
+  // Route step-returned effects through the central effect router —
+  // so combat damage actually hits character.hp, give_item populates
+  // inventory, advance_time pushes the world clock, etc.
+  if (result.effects && result.effects.length > 0) {
+    await ctx.runMutation(internal.effects.applyFlowEffects, {
+      flow_id,
+      effects: result.effects,
+    });
+  }
 
   return {
     flow_id,
