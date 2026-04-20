@@ -10,13 +10,13 @@ keep working untouched.
 
 ## At a glance
 
-| # | Capability | Wave | Schema touch | Runtime touch |
-|---|---|---|---|---|
-| 1 | Biome rules (hooks, time_dilation, spawn_tables) | 2 | Additive `rules:` block on biome payload | New on_enter_biome / on_turn_in_biome dispatcher + clock multiplier |
-| 2 | Item taxonomy + first-class orbs | 2 | New `kind:` discriminator + per-kind schemas | Effect router: on_crack, on_absorb, on_use, narrate |
-| 3 | World clock + day-of-week + per-biome dilation | 2 | `world.time.*` formalized; tick effect | Turn-end tick handler |
-| 4 | NPC memory auto-injected into dialogue prompts | 2–3 | New `memory:` component on npc/character | Event-tap + prompt assembler + salience decay |
-| 5 | AI character-sheet / shared prompt assembler | 2–3 | None | `ctx.assembleNarrativePrompt(entity_id)` runtime helper |
+| # | Capability | Wave | Schema touch | Runtime touch | Deep dive | Status |
+|---|---|---|---|---|---|---|
+| 1 | Biome rules (hooks, time_dilation, spawn_tables) | 2 | Additive `rules:` block on biome payload | New on_enter_biome / on_turn_in_biome dispatcher + clock multiplier | [`21_BIOME_RULES.md`](21_BIOME_RULES.md) | pending |
+| 2 | Item taxonomy + first-class orbs | 2 | New `kind:` discriminator + per-kind schemas | Effect router: on_crack, on_absorb, on_use, narrate | [`22_ITEM_TAXONOMY.md`](22_ITEM_TAXONOMY.md) | pending |
+| 3 | World clock + day-of-week + per-biome dilation | 2 | `world.time.*` formalized; tick effect | Turn-end tick handler | [`23_WORLD_CLOCK.md`](23_WORLD_CLOCK.md) | **shipped** (`a6985aa`) |
+| 4 | NPC memory auto-injected into dialogue prompts | 2–3 | New `memory:` component on npc/character | Event-tap + prompt assembler + salience decay | [`24_NPC_AND_NARRATIVE_PROMPTS.md`](24_NPC_AND_NARRATIVE_PROMPTS.md) | pending |
+| 5 | AI character-sheet / shared prompt assembler | 2–3 | None | `ctx.assembleNarrativePrompt(entity_id)` runtime helper | [`24_NPC_AND_NARRATIVE_PROMPTS.md`](24_NPC_AND_NARRATIVE_PROMPTS.md) | **shipped** (`d761c03`) |
 
 ## Ask 1 — biome rules
 
@@ -241,8 +241,8 @@ Recommended order for landing these in Wave 2:
 
 When each ask ships, mark it below:
 
-- [ ] Ask 1 — biome rules
-- [ ] Ask 2 — item taxonomy
-- [ ] Ask 3 — world clock
-- [ ] Ask 4 — NPC memory
-- [ ] Ask 5 — shared prompt assembler
+- [ ] Ask 1 — biome rules (see `21_BIOME_RULES.md` for full design)
+- [ ] Ask 2 — item taxonomy (see `22_ITEM_TAXONOMY.md`)
+- [x] **Ask 3 — world clock** (shipped `a6985aa`; see `23_WORLD_CLOCK.md`)
+- [ ] Ask 4 — NPC memory (see `24_NPC_AND_NARRATIVE_PROMPTS.md`)
+- [x] **Ask 5 — shared prompt assembler** (shipped `d761c03`; see `24_NPC_AND_NARRATIVE_PROMPTS.md`)

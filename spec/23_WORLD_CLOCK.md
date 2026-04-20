@@ -6,7 +6,7 @@ Formalizes `world.time` — today a scope reference in `02_LOCATION_SCHEMA.md` w
 
 Without this, the Daily Grind's inciting mechanic (the east-stairwell-door that only opens Tuesdays between 3:44 and 3:46) cannot be modeled. Every narrative-time-gated option (home-basketball-game sewer access, dawn-only creatures, weekday-only characters) depends on it.
 
-**Status:** Wave 2 target. Additive over the current `world.time` scope.
+**Status:** **Ask 3 shipped 2026-04-20** in commit `a6985aa`. Shipped shape lives on `branches.state.time` as `{ iso, hhmm, day_of_week, day_counter, week_counter, tick_minutes }` + a sibling `turn: number`. The design below covers the full intent (absolute `epoch_ms` + derived calendar fields like `month` / `season`); the shipped subset covers the Tuesday-3:44 mechanic and is the working foundation. Extend additively as stories demand more of the derived fields.
 
 ## The `world.time` shape
 
