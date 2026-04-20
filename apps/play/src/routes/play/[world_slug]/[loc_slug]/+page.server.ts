@@ -265,6 +265,45 @@ export const actions: Actions = {
 		});
 		if (!world) return fail(404, { error: "world not found" });
 
+		// Streaming path: if flag.expansion_streaming is on for this
+		// world, start a stream and return the stream_id. The client
+		// subscribes reactively and renders prose as it arrives.
+		let streamingOn = false;
+		try {
+			const resolved = await client.query(api.flags.resolve, {
+				session_token: locals.session_token,
+				flag_key: "flag.expansion_streaming",
+				world_slug: params.world_slug
+			});
+			streamingOn = !!(resolved as { enabled?: boolean })?.enabled;
+		} catch {
+			streamingOn = false;
+		}
+
+		if (streamingOn) {
+			try {
+				const { stream_id } = await client.action(
+					api.expansion.startStreamingExpansion,
+					{
+						session_token: locals.session_token,
+						world_id: world._id,
+						location_slug: params.loc_slug,
+						input
+					}
+				);
+				return {
+					stream: {
+						id: stream_id,
+						session_token: locals.session_token,
+						world_slug: params.world_slug
+					}
+				};
+			} catch (e) {
+				return fail(500, { error: (e as Error).message });
+			}
+		}
+
+		// Buffered fallback — original behavior.
 		let result;
 		try {
 			result = await client.action(api.expansion.expandFromFreeText, {

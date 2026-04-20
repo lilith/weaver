@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import SceneArt from '$lib/art/SceneArt.svelte';
+	import StreamingPanel from '$lib/expansion/StreamingPanel.svelte';
 	let { data, form } = $props();
 	let expanding = $state(false);
 	let inputEl = $state<HTMLTextAreaElement | undefined>();
@@ -97,6 +98,14 @@
 			<div class="story-aside mt-4 space-y-2">
 				<p class="italic">{form.narrate}</p>
 			</div>
+		{/if}
+
+		{#if form?.stream}
+			<StreamingPanel
+				streamId={form.stream.id}
+				sessionToken={form.stream.session_token}
+				worldSlug={form.stream.world_slug}
+			/>
 		{/if}
 	</section>
 

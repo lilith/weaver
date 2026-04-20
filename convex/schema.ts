@@ -36,6 +36,9 @@ export default defineSchema({
       v.literal("adult"),
     ),
     current_branch_id: v.optional(v.id("branches")),
+    // Eras v1 — optional, defaults to 1 when absent. Incremented by
+    // advanceEra; entity visibility gating is deferred to v2.
+    active_era: v.optional(v.number()),
     created_at: v.number(),
   })
     .index("by_owner", ["owner_user_id"])
@@ -396,6 +399,49 @@ export default defineSchema({
     order: v.number(),
     created_at: v.number(),
   }).index("by_world_kind", ["world_id", "kind", "order"]),
+
+  // ---------------------------------------------------------------
+  // Expansion streams — progressive text from Opus as it arrives.
+  // Client subscribes via convex-svelte useQuery; the action updates
+  // `text` in-place every ~200ms. Once `status="done"` the entity is
+  // persisted and this row can be discarded. Flag: expansion_streaming.
+  expansion_streams: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),
+    parent_location_slug: v.string(),
+    input: v.string(),
+    status: v.union(
+      v.literal("streaming"),
+      v.literal("done"),
+      v.literal("failed"),
+    ),
+    text: v.string(), // accumulating chunks
+    // Set when done: the slug that was produced (for navigation), or
+    // the narrate text if Opus chose narrate.
+    result_kind: v.optional(v.union(v.literal("location"), v.literal("narrate"))),
+    result_slug: v.optional(v.string()),
+    result_narrate_text: v.optional(v.string()),
+    error: v.optional(v.string()),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_character_status", ["character_id", "status"])
+    .index("by_world_status_time", ["world_id", "status", "created_at"]),
+
+  // ---------------------------------------------------------------
+  // Chronicles — era-transition narratives written by Opus. One row
+  // per (world, from_era → to_era) event. Rendered in the bible admin
+  // + shown in-game when a player crosses the era boundary.
+  chronicles: defineTable({
+    world_id: v.id("worlds"),
+    from_era: v.number(),
+    to_era: v.number(),
+    title: v.string(),
+    body: v.string(),
+    written_by_user_id: v.optional(v.id("users")),
+    created_at: v.number(),
+  }).index("by_world_era", ["world_id", "to_era"]),
 
   // ---------------------------------------------------------------
   // Runtime bugs — invariant violations caught by sanitizers on the

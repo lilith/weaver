@@ -6,12 +6,12 @@
 // "create_location OR narrate." Good enough to prove the magic. Full
 // pipeline lands in Wave 1.
 
-import { action, internalAction, internalMutation, internalQuery } from "./_generated/server.js";
+import { action, internalAction, internalMutation, internalQuery, query } from "./_generated/server.js";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Id } from "./_generated/dataModel.js";
-import { resolveSession, resolveMember } from "./sessions.js";
+import { resolveSession, resolveMember, requireMembership } from "./sessions.js";
 import { writeJSONBlob, readJSONBlob } from "./blobs.js";
 import { recordJourneyTransition } from "./journeys.js";
 import { scheduleArtForEntity } from "./art.js";
@@ -33,6 +33,261 @@ type Location = {
   safe_anchor: boolean;
   author_pseudonym?: string;
 };
+
+// --------------------------------------------------------------------
+// Streaming path (flag.expansion_streaming). Creates a progress row,
+// calls Anthropic streaming, writes chunks reactively so the client
+// sees prose arrive live. On completion, inserts the entity + moves
+// character; marks stream done with result_slug / result_narrate_text.
+
+const STREAM_FLUSH_MS = 180;
+const STREAM_FLUSH_CHARS = 120;
+
+export const startStreamingExpansion = action({
+  args: {
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    location_slug: v.string(),
+    input: v.string(),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_id, location_slug, input },
+  ): Promise<{ stream_id: Id<"expansion_streams"> }> => {
+    const trimmed = input.trim();
+    if (!trimmed) throw new Error("empty input");
+    if (trimmed.length > 500) throw new Error("input too long (max 500 chars)");
+
+    const pre = await ctx.runQuery(internal.expansion.loadExpansionContext, {
+      session_token,
+      world_id,
+      location_slug,
+    });
+    const character = await ctx.runQuery(internal.expansion.getCharacterForStream, {
+      session_token,
+      world_id,
+    });
+    if (!character) throw new Error("no character in this world");
+
+    const { stream_id } = await ctx.runMutation(
+      internal.expansion.createStreamRow,
+      {
+        world_id,
+        branch_id: pre.branch_id,
+        character_id: character._id,
+        parent_location_slug: location_slug,
+        input: trimmed,
+      },
+    );
+
+    // Fire the stream work via scheduler so the client has time to
+    // subscribe to the row.
+    await ctx.scheduler.runAfter(0, internal.expansion.runStreamingExpansion, {
+      stream_id,
+      session_token,
+      world_id,
+      location_slug,
+      input: trimmed,
+    });
+    return { stream_id };
+  },
+});
+
+export const createStreamRow = internalMutation({
+  args: {
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),
+    parent_location_slug: v.string(),
+    input: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const stream_id = await ctx.db.insert("expansion_streams", {
+      world_id: args.world_id,
+      branch_id: args.branch_id,
+      character_id: args.character_id,
+      parent_location_slug: args.parent_location_slug,
+      input: args.input,
+      status: "streaming",
+      text: "",
+      created_at: now,
+      updated_at: now,
+    });
+    return { stream_id };
+  },
+});
+
+export const getCharacterForStream = internalQuery({
+  args: { session_token: v.string(), world_id: v.id("worlds") },
+  handler: async (ctx, { session_token, world_id }) => {
+    const { user_id } = await resolveMember(ctx as any, session_token, world_id);
+    return await ctx.db
+      .query("characters")
+      .withIndex("by_world_user", (q: any) =>
+        q.eq("world_id", world_id).eq("user_id", user_id),
+      )
+      .first();
+  },
+});
+
+export const patchStream = internalMutation({
+  args: {
+    stream_id: v.id("expansion_streams"),
+    append_text: v.optional(v.string()),
+    status: v.optional(
+      v.union(v.literal("streaming"), v.literal("done"), v.literal("failed")),
+    ),
+    result_kind: v.optional(v.union(v.literal("location"), v.literal("narrate"))),
+    result_slug: v.optional(v.string()),
+    result_narrate_text: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.stream_id);
+    if (!row) return;
+    const patch: any = { updated_at: Date.now() };
+    if (args.append_text !== undefined)
+      patch.text = (row.text ?? "") + args.append_text;
+    if (args.status !== undefined) patch.status = args.status;
+    if (args.result_kind !== undefined) patch.result_kind = args.result_kind;
+    if (args.result_slug !== undefined) patch.result_slug = args.result_slug;
+    if (args.result_narrate_text !== undefined)
+      patch.result_narrate_text = args.result_narrate_text;
+    if (args.error !== undefined) patch.error = args.error;
+    await ctx.db.patch(args.stream_id, patch);
+  },
+});
+
+export const readStream = query({
+  args: {
+    session_token: v.string(),
+    stream_id: v.id("expansion_streams"),
+  },
+  handler: async (ctx, { session_token, stream_id }) => {
+    const row = await ctx.db.get(stream_id);
+    if (!row) return null;
+    const { user_id } = await resolveMember(ctx, session_token, row.world_id);
+    const character = await ctx.db.get(row.character_id);
+    if (!character || character.user_id !== user_id) return null;
+    return {
+      id: row._id,
+      status: row.status,
+      text: row.text,
+      result_kind: row.result_kind ?? null,
+      result_slug: row.result_slug ?? null,
+      result_narrate_text: row.result_narrate_text ?? null,
+      error: row.error ?? null,
+      updated_at: row.updated_at,
+    };
+  },
+});
+
+export const runStreamingExpansion = internalAction({
+  args: {
+    stream_id: v.id("expansion_streams"),
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    location_slug: v.string(),
+    input: v.string(),
+  },
+  handler: async (
+    ctx,
+    { stream_id, session_token, world_id, location_slug, input },
+  ) => {
+    try {
+      const ctxData = await ctx.runQuery(internal.expansion.loadExpansionContext, {
+        session_token,
+        world_id,
+        location_slug,
+      });
+      const assembled = await ctx.runQuery(internal.narrative.buildPrompt, {
+        world_id,
+        purpose: "expansion",
+        location_entity_id: ctxData.parentEntityId,
+      });
+      const expansionInstructions = buildExpansionInstructions();
+      const userPrompt = buildUserPrompt(ctxData.parent, input, ctxData.characterName);
+
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const stream = anthropic.messages.stream({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        temperature: 1.0,
+        system: [
+          ...assembled.system,
+          { type: "text", text: expansionInstructions },
+        ],
+        messages: [{ role: "user", content: userPrompt }],
+      });
+
+      // Flush buffer: accumulate chunks and push to the row on a timer
+      // OR when the buffer hits N chars, whichever comes first.
+      let buffer = "";
+      let lastFlush = Date.now();
+      const flushIfReady = async (force = false) => {
+        const now = Date.now();
+        if (!buffer) return;
+        if (!force && now - lastFlush < STREAM_FLUSH_MS && buffer.length < STREAM_FLUSH_CHARS) return;
+        const toSend = buffer;
+        buffer = "";
+        lastFlush = now;
+        await ctx.runMutation(internal.expansion.patchStream, {
+          stream_id,
+          append_text: toSend,
+        });
+      };
+
+      for await (const event of stream) {
+        if (
+          event.type === "content_block_delta" &&
+          (event as any).delta?.type === "text_delta"
+        ) {
+          buffer += (event as any).delta.text ?? "";
+          await flushIfReady();
+        }
+      }
+      await flushIfReady(true);
+      const final = await stream.finalMessage();
+      const text = final.content
+        .filter((c: any) => c.type === "text")
+        .map((c: any) => c.text)
+        .join("")
+        .trim();
+      const parsed = parseLocationOrNarrate(text, location_slug, ctxData.authorPseudonym);
+      if (parsed.kind === "narrate") {
+        await ctx.runMutation(internal.expansion.patchStream, {
+          stream_id,
+          status: "done",
+          result_kind: "narrate",
+          result_narrate_text: parsed.text,
+        });
+        return;
+      }
+      // Insert the location + move character. Reuses the same flow as
+      // the buffered path; client will navigate once it sees the
+      // result_slug land on the stream row.
+      const result = await ctx.runMutation(internal.expansion.insertExpandedLocation, {
+        session_token,
+        world_id,
+        parent_location_slug: location_slug,
+        location: parsed.location,
+      });
+      await ctx.runMutation(internal.expansion.patchStream, {
+        stream_id,
+        status: "done",
+        result_kind: "location",
+        result_slug: result.new_location_slug,
+      });
+    } catch (e: any) {
+      await ctx.runMutation(internal.expansion.patchStream, {
+        stream_id,
+        status: "failed",
+        error: String(e?.message ?? e),
+      });
+    }
+  },
+});
 
 export const expandFromFreeText = action({
   args: {
