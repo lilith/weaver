@@ -45,6 +45,12 @@ export type AssembledPrompt = {
     has_bible: boolean;
     has_speaker: boolean;
     has_biome_context: boolean;
+    has_era: boolean;
+    has_spatial_context: boolean;
+    has_recent_events: boolean;
+    active_era: number;
+    neighbor_count: number;
+    recent_event_count: number;
     estimated_cache_tokens: number;
   };
 };
@@ -68,6 +74,7 @@ export async function assembleNarrativePrompt(
     return emptyPrompt(args.purpose);
   }
   const branch_id = world.current_branch_id;
+  const activeEra = world.active_era ?? 1;
 
   // Bible — cacheable prefix.
   const bibleEntity = await ctx.db
@@ -108,12 +115,73 @@ export async function assembleNarrativePrompt(
     }
   }
 
-  // Character (the player) — summary of state + inventory.
+  // Character (the player) — summary of state + inventory + recent says.
   let characterSummary: string | null = null;
+  let recentEvents: string[] = [];
   if (args.character_id) {
     const c = (await ctx.db.get(args.character_id)) as Doc<"characters"> | null;
     if (c && c.world_id === args.world_id) {
       characterSummary = summarizeCharacter(c);
+      // Pull the last N pending_says as session-recall context — what the
+      // player just saw/did. Keeps expansion + narrate grounded in the
+      // moment rather than freewheeling generic fantasy.
+      const pending = Array.isArray((c.state as any)?.pending_says)
+        ? ((c.state as any).pending_says as string[])
+        : [];
+      recentEvents = pending.slice(-10);
+    }
+  }
+
+  // Current-era context — era number + last N chronicle titles/hooks.
+  // Opus reads this to stay in-period: don't introduce content that
+  // predates the current era, do reference the most recent turning
+  // point. Pull the chronicles ordered by to_era ascending.
+  let chronicleSummary: string[] = [];
+  {
+    const chronicles = await ctx.db
+      .query("chronicles")
+      .withIndex("by_world_era", (q: any) => q.eq("world_id", args.world_id))
+      .collect();
+    chronicleSummary = chronicles
+      .sort((a: any, b: any) => a.to_era - b.to_era)
+      .slice(-3)
+      .map(
+        (c: any) =>
+          `era ${c.from_era}→${c.to_era}: "${c.title}" — ${(c.body as string).slice(0, 200)}`,
+      );
+  }
+
+  // Spatial context — if a location is provided, pull its neighbors +
+  // one-sentence summaries so expansion/narrate has the local geography
+  // on hand. Avoids hallucinating a "path back to village" when the
+  // actual neighbor is "apothecary."
+  let neighborSummaries: string[] = [];
+  if (args.location_entity_id) {
+    const loc = (await ctx.db.get(args.location_entity_id)) as Doc<"entities"> | null;
+    if (loc && loc.world_id === args.world_id) {
+      const locPayload = await readEntityPayload<any>(ctx, loc);
+      const neighbors = (locPayload?.neighbors ?? {}) as Record<string, string>;
+      const neighborSlugs = Object.values(neighbors).slice(0, 6);
+      for (const nslug of neighborSlugs) {
+        const ne = await ctx.db
+          .query("entities")
+          .withIndex("by_branch_type_slug", (q: any) =>
+            q.eq("branch_id", branch_id).eq("type", "location").eq("slug", nslug),
+          )
+          .first();
+        if (!ne) continue;
+        const np = await readEntityPayload<any>(ctx, ne);
+        if (!np) continue;
+        const short = String(
+          np.description_template ?? np.prose ?? np.description ?? "",
+        )
+          .replace(/\{\{[^}]+\}\}/g, "")
+          .slice(0, 140)
+          .trim();
+        neighborSummaries.push(
+          `${np.name ?? nslug} (${np.biome ?? "—"}): ${short || "(no prose yet)"}`,
+        );
+      }
     }
   }
 
@@ -210,6 +278,37 @@ export async function assembleNarrativePrompt(
     });
   }
 
+  // Current era + chronicle recap — always included. Small tokens,
+  // huge coherency payoff: Opus stays in-period and references the
+  // right turning points.
+  {
+    const lines: string[] = [`active_era: ${activeEra}`];
+    if (chronicleSummary.length > 0) {
+      lines.push("chronicles (most recent first):");
+      for (const c of [...chronicleSummary].reverse()) lines.push(`  ${c}`);
+    } else {
+      lines.push("chronicles: (none — era 1)");
+    }
+    system.push({ type: "text", text: `<current_era>\n${lines.join("\n")}\n</current_era>` });
+  }
+
+  // Spatial context — neighbors of the active location.
+  if (neighborSummaries.length > 0) {
+    system.push({
+      type: "text",
+      text: `<spatial_context>\n${neighborSummaries.join("\n")}\n</spatial_context>`,
+    });
+  }
+
+  // Recent events — last 10 pending_says from character session.
+  // Stripped of convention-markers like "(...)" if present.
+  if (recentEvents.length > 0) {
+    system.push({
+      type: "text",
+      text: `<recent_events>\n${recentEvents.map((e, i) => `  ${i + 1}. ${e}`).join("\n")}\n</recent_events>`,
+    });
+  }
+
   const user = args.extra_context ?? "";
 
   return {
@@ -220,6 +319,12 @@ export async function assembleNarrativePrompt(
       has_bible: !!bible,
       has_speaker: !!speaker,
       has_biome_context: !!biome,
+      has_era: true,
+      has_spatial_context: neighborSummaries.length > 0,
+      has_recent_events: recentEvents.length > 0,
+      active_era: activeEra,
+      neighbor_count: neighborSummaries.length,
+      recent_event_count: recentEvents.length,
       estimated_cache_tokens: bible ? Math.ceil(JSON.stringify(bible).length / 4) : 0,
     },
   };
@@ -234,6 +339,12 @@ function emptyPrompt(purpose: string): AssembledPrompt {
       has_bible: false,
       has_speaker: false,
       has_biome_context: false,
+      has_era: false,
+      has_spatial_context: false,
+      has_recent_events: false,
+      active_era: 1,
+      neighbor_count: 0,
+      recent_event_count: 0,
       estimated_cache_tokens: 0,
     },
   };

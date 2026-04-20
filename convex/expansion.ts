@@ -205,6 +205,7 @@ export const runStreamingExpansion = internalAction({
         world_id,
         purpose: "expansion",
         location_entity_id: ctxData.parentEntityId,
+        character_id: ctxData.characterId ?? undefined,
       });
       const expansionInstructions = buildExpansionInstructions();
       const userPrompt = buildUserPrompt(ctxData.parent, input, ctxData.characterName);
@@ -427,6 +428,7 @@ export const loadExpansionContext = internalQuery({
       parent,
       parentEntityId: parentEntity._id,
       branch_id,
+      characterId: character?._id ?? null,
       characterName: character?.pseudonym ?? "the traveler",
       authorPseudonym: character?.pseudonym ?? "the traveler",
     };
