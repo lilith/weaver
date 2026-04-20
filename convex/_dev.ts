@@ -116,6 +116,158 @@ export const preauthorizeHousehold = internalMutation({
 });
 
 /**
+ * Cascade-delete a world. Removes every row that belongs to this world
+ * across every table; leaves blobs alone (content-addressed, shared,
+ * mark-swept later). Refuses without the explicit confirm literal so
+ * you can't tab-complete yourself into disaster.
+ */
+export const deleteWorld = internalMutation({
+  args: {
+    world_slug: v.string(),
+    confirm: v.literal("yes-delete-please"),
+  },
+  handler: async (ctx, { world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world "${world_slug}" not found`);
+    const world_id = world._id;
+
+    const counts: Record<string, number> = {};
+    const del = async (name: string, rows: { _id: any }[]) => {
+      for (const r of rows) await ctx.db.delete(r._id);
+      counts[name] = rows.length;
+    };
+
+    // Branches owned by this world (and the dependent rows indexed by branch_id).
+    const branches = await ctx.db
+      .query("branches")
+      .withIndex("by_world", (q) => q.eq("world_id", world_id))
+      .collect();
+
+    for (const b of branches) {
+      const entities = await ctx.db
+        .query("entities")
+        .withIndex("by_branch_type", (q) => q.eq("branch_id", b._id))
+        .collect();
+      // Components, artifact_versions, relations depend on entities.
+      for (const e of entities) {
+        const components = await ctx.db
+          .query("components")
+          .withIndex("by_branch_entity_type", (q) =>
+            q.eq("branch_id", b._id).eq("entity_id", e._id),
+          )
+          .collect();
+        for (const c of components) await ctx.db.delete(c._id);
+        counts.components = (counts.components ?? 0) + components.length;
+
+        const versions = await ctx.db
+          .query("artifact_versions")
+          .withIndex("by_artifact_version", (q) =>
+            q.eq("artifact_entity_id", e._id),
+          )
+          .collect();
+        for (const v of versions) await ctx.db.delete(v._id);
+        counts.artifact_versions =
+          (counts.artifact_versions ?? 0) + versions.length;
+
+        const relsAsSubject = await ctx.db
+          .query("relations")
+          .withIndex("by_branch_subject_pred", (q) =>
+            q.eq("branch_id", b._id).eq("subject_id", e._id),
+          )
+          .collect();
+        for (const r of relsAsSubject) await ctx.db.delete(r._id);
+        const relsAsObject = await ctx.db
+          .query("relations")
+          .withIndex("by_branch_object_pred", (q) =>
+            q.eq("branch_id", b._id).eq("object_id", e._id),
+          )
+          .collect();
+        for (const r of relsAsObject) await ctx.db.delete(r._id);
+        counts.relations =
+          (counts.relations ?? 0) + relsAsSubject.length + relsAsObject.length;
+      }
+      for (const e of entities) await ctx.db.delete(e._id);
+      counts.entities = (counts.entities ?? 0) + entities.length;
+
+      // Chat threads + messages by scope entity were deleted with entities;
+      // any surviving thread/message by branch is orphan — sweep:
+      const threads = await ctx.db.query("chat_threads").collect();
+      const threadsHere = threads.filter((t) => t.branch_id === b._id);
+      for (const t of threadsHere) {
+        const msgs = await ctx.db
+          .query("chat_messages")
+          .withIndex("by_thread_time", (q) => q.eq("thread_id", t._id))
+          .collect();
+        for (const m of msgs) await ctx.db.delete(m._id);
+        counts.chat_messages = (counts.chat_messages ?? 0) + msgs.length;
+        await ctx.db.delete(t._id);
+      }
+      counts.chat_threads = (counts.chat_threads ?? 0) + threadsHere.length;
+
+      // Flows + events scoped by branch/character.
+      const flows = await ctx.db.query("flows").collect();
+      const flowsHere = flows.filter((f) => f.branch_id === b._id);
+      for (const f of flowsHere) {
+        const events = await ctx.db
+          .query("events")
+          .withIndex("by_flow_index", (q) => q.eq("flow_id", f._id))
+          .collect();
+        for (const e of events) await ctx.db.delete(e._id);
+        counts.events = (counts.events ?? 0) + events.length;
+        await ctx.db.delete(f._id);
+      }
+      counts.flows = (counts.flows ?? 0) + flowsHere.length;
+
+      // Art queue scoped by branch.
+      const artRows = await ctx.db.query("art_queue").collect();
+      const artHere = artRows.filter((a) => a.branch_id === b._id);
+      for (const a of artHere) await ctx.db.delete(a._id);
+      counts.art_queue = (counts.art_queue ?? 0) + artHere.length;
+    }
+    for (const b of branches) await ctx.db.delete(b._id);
+    counts.branches = branches.length;
+
+    // World-scoped tables: characters, memberships, themes, cost_ledger, mentorship_log
+    const characters = await ctx.db
+      .query("characters")
+      .withIndex("by_world_user", (q) => q.eq("world_id", world_id))
+      .collect();
+    await del("characters", characters);
+
+    const memberships = await ctx.db
+      .query("world_memberships")
+      .withIndex("by_world_user", (q) => q.eq("world_id", world_id))
+      .collect();
+    await del("world_memberships", memberships);
+
+    const themes = await ctx.db
+      .query("themes")
+      .withIndex("by_world_active", (q) => q.eq("world_id", world_id))
+      .collect();
+    await del("themes", themes);
+
+    const cost = await ctx.db
+      .query("cost_ledger")
+      .withIndex("by_world_day", (q) => q.eq("world_id", world_id))
+      .collect();
+    await del("cost_ledger", cost);
+
+    const mentorship = await ctx.db.query("mentorship_log").collect();
+    const mentorshipHere = mentorship.filter((m) => m.world_id === world_id);
+    for (const m of mentorshipHere) await ctx.db.delete(m._id);
+    counts.mentorship_log = mentorshipHere.length;
+
+    await ctx.db.delete(world_id);
+    counts.worlds = 1;
+
+    return { deleted: world_slug, name: world.name, counts };
+  },
+});
+
+/**
  * Transfer ownership of every world currently owned by `old_primary_email`
  * to `new_primary_email`. The old primary is demoted to `role: "player"`
  * on each of those worlds (still has access). New primary gets/keeps

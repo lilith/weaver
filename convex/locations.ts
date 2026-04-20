@@ -104,10 +104,16 @@ export const applyOption = mutation({
       .first();
     if (!entity) throw new Error(`location "${location_slug}" not found`);
 
-    // Server-enforced: character must currently be at this location, to
-    // prevent acting from anywhere.
+    // If the character's recorded location disagrees with the URL, we
+    // trust the URL — the player arrived here via the UI, so reconcile
+    // their current_location_id on the fly. (Every location is authored
+    // content; options are indexed server-side; there's no "secret"
+    // option you can pick from elsewhere. The per-user scope prevents
+    // cross-user mischief.)
     if (character.current_location_id !== entity._id) {
-      throw new Error("character is not at this location");
+      await ctx.db.patch(character._id, {
+        current_location_id: entity._id,
+      });
     }
 
     const payload = await readAuthoredPayload<{
