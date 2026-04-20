@@ -16,6 +16,7 @@ import type * as blobs from "../blobs.js";
 import type * as characters from "../characters.js";
 import type * as classify from "../classify.js";
 import type * as cli from "../cli.js";
+import type * as cost from "../cost.js";
 import type * as crons from "../crons.js";
 import type * as diagnostics from "../diagnostics.js";
 import type * as effects from "../effects.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   characters: typeof characters;
   classify: typeof classify;
   cli: typeof cli;
+  cost: typeof cost;
   crons: typeof crons;
   diagnostics: typeof diagnostics;
   effects: typeof effects;

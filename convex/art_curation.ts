@@ -30,6 +30,7 @@ import { resolveSession, resolveMember } from "./sessions.js";
 import { isFeatureEnabled } from "./flags.js";
 import { readJSONBlob } from "./blobs.js";
 import { appendMentorship } from "./mentorship.js";
+import { falCostUsd } from "./cost.js";
 import {
   MODE_PROMPTS,
   MODE_SIZES,
@@ -305,6 +306,12 @@ export const runGenVariant = internalAction({
           logs: false,
         });
       }
+      await ctx.runMutation(internal.cost.logCostUsd, {
+        world_id: info.world_id,
+        kind: `fal:${modelUsed}:art_variant`,
+        cost_usd: falCostUsd(modelUsed),
+        reason: `${info.entity_slug} ${info.mode} variant${promptNote}`,
+      });
       const imageUrl: string | undefined = result?.data?.images?.[0]?.url;
       if (!imageUrl) throw new Error("fal returned no image url");
 
@@ -425,6 +432,8 @@ export const loadRenderingCtx = internalQuery({
 
     return {
       mode: rendering.mode,
+      world_id: rendering.world_id,
+      entity_slug: entity.slug,
       prompt_ctx: {
         entity: {
           name: payload?.name ?? entity.slug,

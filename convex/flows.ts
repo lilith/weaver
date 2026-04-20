@@ -26,6 +26,7 @@ import {
 import { internal, api } from "./_generated/api.js";
 import { resolveMember } from "./sessions.js";
 import { isFeatureEnabled } from "./flags.js";
+import { anthropicCostUsd } from "./cost.js";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   isTerminal,
@@ -291,6 +292,13 @@ async function runStep(
             content: `${assembled.user ?? ""}\n\n${prompt}`,
           },
         ],
+      });
+      await ctx.runMutation(internal.cost.logCostUsd, {
+        world_id: flow.world_id,
+        branch_id: flow.branch_id,
+        kind: `anthropic:sonnet:flow:${flow.module_name}`,
+        cost_usd: anthropicCostUsd("claude-sonnet-4-6", response.usage as any),
+        reason: `flow ${flow.module_name} narrate`,
       });
       const text = response.content
         .filter((c: any) => c.type === "text")

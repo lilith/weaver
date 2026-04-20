@@ -18,6 +18,7 @@ import { internal, api } from "./_generated/api.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveMember } from "./sessions.js";
 import { readJSONBlob } from "./blobs.js";
+import { anthropicCostUsd } from "./cost.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
 const CLASSIFY_MODEL = "claude-haiku-4-5-20251001";
@@ -66,8 +67,9 @@ export const classifyIntent = internalAction({
   args: {
     input: v.string(),
     context: v.any(),
+    world_id: v.optional(v.id("worlds")),
   },
-  handler: async (_ctx, { input, context }): Promise<Classification> => {
+  handler: async (ctx, { input, context, world_id }): Promise<Classification> => {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
       model: CLASSIFY_MODEL,
@@ -81,6 +83,14 @@ export const classifyIntent = internalAction({
         },
       ],
     });
+    if (world_id) {
+      await ctx.runMutation(internal.cost.logCostUsd, {
+        world_id,
+        kind: `anthropic:${CLASSIFY_MODEL}:classify`,
+        cost_usd: anthropicCostUsd(CLASSIFY_MODEL, response.usage as any),
+        reason: `classify "${input.slice(0, 60)}"`,
+      });
+    }
     const text = response.content
       .filter((c: any) => c.type === "text")
       .map((c: any) => c.text)
@@ -244,6 +254,7 @@ export const dispatchFreeText = action({
     const classification = await ctx.runAction(internal.classify.classifyIntent, {
       input: trimmed,
       context,
+      world_id,
     });
 
     // Atom routing. Low-confidence → narrative fallback.

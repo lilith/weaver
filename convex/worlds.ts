@@ -8,6 +8,7 @@ import { resolveSession, resolveMember } from "./sessions.js";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { initWorldTime } from "@weaver/engine/clock";
 import { appendMentorship } from "./mentorship.js";
+import { anthropicCostUsd } from "./cost.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Id } from "./_generated/dataModel.js";
 
@@ -821,6 +822,12 @@ export const advanceEra = action({
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/i, "");
+    await ctx.runMutation(internal.cost.logCostUsd, {
+      world_id: info.world_id,
+      kind: `anthropic:${CHRONICLE_MODEL}:era_advance`,
+      cost_usd: anthropicCostUsd(CHRONICLE_MODEL, response.usage as any),
+      reason: `era advance ${fromEra}→${toEra}`,
+    });
     if (response.stop_reason === "max_tokens") {
       throw new Error(
         `chronicle generation hit max_tokens (2000) before Opus closed the JSON — try a terser --hint`,

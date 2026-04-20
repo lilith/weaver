@@ -18,6 +18,7 @@ import { scheduleArtForEntity } from "./art.js";
 import { isFeatureEnabled } from "./flags.js";
 import { logBugs } from "./diagnostics.js";
 import { sanitizeLocationPayload } from "@weaver/engine/diagnostics";
+import { anthropicCostUsd } from "./cost.js";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 2048;
@@ -255,6 +256,12 @@ export const runStreamingExpansion = internalAction({
         .map((c: any) => c.text)
         .join("")
         .trim();
+      await ctx.runMutation(internal.cost.logCostUsd, {
+        world_id,
+        kind: `anthropic:${MODEL}:expand_stream`,
+        cost_usd: anthropicCostUsd(MODEL, final.usage as any),
+        reason: `streaming expand "${input.slice(0, 80)}"`,
+      });
       const parsed = parseLocationOrNarrate(text, location_slug, ctxData.authorPseudonym);
       if (parsed.kind === "narrate") {
         await ctx.runMutation(internal.expansion.patchStream, {
@@ -343,6 +350,12 @@ export const expandFromFreeText = action({
       .map((c: any) => c.text)
       .join("")
       .trim();
+    await ctx.runMutation(internal.cost.logCostUsd, {
+      world_id,
+      kind: `anthropic:${MODEL}:expand_oneshot`,
+      cost_usd: anthropicCostUsd(MODEL, response.usage as any),
+      reason: `expand from free-text "${trimmed.slice(0, 80)}"`,
+    });
 
     const parsed = parseLocationOrNarrate(text, location_slug, ctxData.authorPseudonym);
     if (parsed.kind === "narrate") return parsed;
@@ -845,6 +858,12 @@ export const runPrefetch = internalAction({
       .map((c: any) => c.text)
       .join("")
       .trim();
+    await ctx.runMutation(internal.cost.logCostUsd, {
+      world_id,
+      kind: `anthropic:${MODEL}:prefetch`,
+      cost_usd: anthropicCostUsd(MODEL, response.usage as any),
+      reason: `prefetch for option "${option_label.slice(0, 60)}"`,
+    });
 
     const parsed = parseLocationOrNarrate(text, location_slug, ctxData.authorPseudonym);
     if (parsed.kind === "narrate") return; // nothing to pre-warm

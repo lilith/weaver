@@ -23,6 +23,7 @@ import {
 } from "@weaver/engine/effects";
 import { isFeatureEnabled } from "./flags.js";
 import { writeNpcMemory } from "./npc_memory.js";
+import { anthropicCostUsd } from "./cost.js";
 import { internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
@@ -540,6 +541,13 @@ export const runNarrate = internalAction({
           content: `${assembled.user ?? ""}\n\n${prompt}\n\nRespond with 1–3 sentences of flavor prose, in character with the world bible tone. No meta-commentary, no markdown.`,
         },
       ],
+    });
+    await ctx.runMutation(internal.cost.logCostUsd, {
+      world_id,
+      branch_id,
+      kind: "anthropic:sonnet:narrate",
+      cost_usd: anthropicCostUsd("claude-sonnet-4-6", response.usage as any),
+      reason: "narrate effect",
     });
     const text = response.content
       .filter((c: any) => c.type === "text")
