@@ -61,6 +61,22 @@ These override defaults and reflect hard-earned preferences:
 - `packages/engine/` and `packages/test/` — workspaces configured for them but no code yet. Land when the core engine types outgrow living in `convex/` alone.
 - All Wave 1 features (world bible builder, expansion loop, chat, multi-player, etc.).
 
+## Story research & reference material
+
+`backstory/` at the repo root is a **separate private git repo** (gitignored
+by weaver) holding imported source material and LLM-extracted reference data
+for specific stories used as authoring inspiration. It is multi-story; today
+it holds one story (`argus-daily-grind`, 789K words across 5 volumes).
+
+- Weaver itself is multi-story, multi-instance. **Nothing story-specific ever
+  lands in this repo** — no character names, no location slugs, no copyrighted
+  excerpts. All of that stays in `backstory/`.
+- Agents working in `backstory/` should read `backstory/CLAUDE.md` and
+  `backstory/EXTRACTION_SPEC.md`.
+- The extracted/ output is shaped to match Weaver's authoring file format
+  (`spec/AUTHORING_AND_SYNC.md`) so entities can later be imported into a
+  Weaver world as grounding material if Lilith chooses.
+
 ## Known bugs
 
 *(none yet — Wave 0 code hasn't started)*

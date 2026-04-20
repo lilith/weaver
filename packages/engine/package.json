@@ -1,0 +1,16 @@
+{
+  "name": "@weaver/engine",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./blobs": "./src/blobs/index.ts",
+    "./template": "./src/template/index.ts",
+    "./schemas": "./src/schemas/index.ts"
+  },
+  "peerDependencies": {
+    "@noble/hashes": "*",
+    "zod": "*"
+  }
+}
