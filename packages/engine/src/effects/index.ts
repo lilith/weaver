@@ -124,7 +124,8 @@ export function inventoryHasKind(inv: Inventory | undefined, kind: string): bool
 }
 
 /** Add a qty of slug to the inventory, creating the entry if missing.
- *  Pure — returns a new object. */
+ *  Pure — returns a new object. Empty/undefined slugs are a no-op so a
+ *  malformed effect can never silently write an `undefined` key. */
 export function inventoryAdd(
   inv: Inventory | undefined,
   slug: string,
@@ -132,6 +133,8 @@ export function inventoryAdd(
   extra?: Partial<InventoryEntry>,
 ): Inventory {
   const next = { ...(inv ?? {}) };
+  if (!slug || typeof slug !== "string") return next;
+  if (!Number.isFinite(qty) || qty <= 0) return next;
   const cur = next[slug];
   if (cur) {
     next[slug] = { ...cur, ...extra, qty: (cur.qty ?? 0) + qty };

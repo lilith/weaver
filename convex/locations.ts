@@ -317,6 +317,16 @@ export const applyOption = mutation({
       closedJourneyId = j.closed_journey_id;
     }
 
+    // --- Location on_leave (current location) — spec 02. Always on;
+    //     authored effects run regardless of flag.biome_rules. Only
+    //     fires when we're ACTUALLY leaving (new location resolved). ---
+    const onLeave = Array.isArray((payload as any).on_leave)
+      ? ((payload as any).on_leave as any[])
+      : null;
+    if (onLeave && onLeave.length > 0 && newLocationEntity) {
+      await applyEffects(ctx, onLeave, exec);
+    }
+
     // --- Biome rules (Ask 1, spec 21, flag.biome_rules) ---
     // Must run BEFORE the character.state patch so hook-driven mutations
     // to state + thisScope land in the same patch as option effects.
@@ -392,6 +402,34 @@ export const applyOption = mutation({
             dilation = rules.time_dilation;
           }
         }
+      }
+    }
+
+    // --- Location on_enter (new location) — spec 02. Pivot exec.thisScope
+    //     to the new location's `this` bucket so `this.visited++` lands
+    //     under the right key (not the origin's). ---
+    if (newLocationEntity) {
+      try {
+        const newPayload = await readAuthoredPayload<any>(ctx, newLocationEntity);
+        const onEnter = Array.isArray(newPayload?.on_enter)
+          ? (newPayload.on_enter as any[])
+          : null;
+        if (onEnter && onEnter.length > 0) {
+          const newLocSlug = newLocationEntity.slug;
+          state.this ??= {};
+          (state.this as any)[newLocSlug] ??= {};
+          const prevScope = exec.thisScope;
+          const prevSlug = exec.location_slug;
+          exec.thisScope = (state.this as any)[newLocSlug];
+          exec.location_slug = newLocSlug;
+          await applyEffects(ctx, onEnter, exec);
+          // Restore for any downstream code that might read these;
+          // in practice nothing does after this point.
+          exec.thisScope = prevScope;
+          exec.location_slug = prevSlug;
+        }
+      } catch {
+        /* can't read new payload — skip on_enter */
       }
     }
 

@@ -119,6 +119,7 @@ async function applyOneEffect(
       );
       return;
     case "give_item":
+      if (!eff.slug || typeof eff.slug !== "string") return; // malformed effect — drop quietly
       if (!exec.flags.item_taxonomy) {
         exec.says.push(`(gained ${eff.qty ?? 1}× ${eff.slug} — item system not yet enabled)`);
         return;
@@ -126,14 +127,17 @@ async function applyOneEffect(
       await applyGiveItem(ctx, eff, exec);
       return;
     case "take_item":
+      if (!eff.slug || typeof eff.slug !== "string") return;
       if (!exec.flags.item_taxonomy) return;
       await applyTakeItem(ctx, eff, exec);
       return;
     case "use_item":
+      if (!eff.slug || typeof eff.slug !== "string") return;
       if (!exec.flags.item_taxonomy) return;
       await applyUseItem(ctx, eff, exec);
       return;
     case "crack_orb":
+      if (!eff.slug || typeof eff.slug !== "string") return;
       if (!exec.flags.item_taxonomy) return;
       await applyCrackOrb(ctx, eff, exec);
       return;
