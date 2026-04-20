@@ -305,6 +305,10 @@ What this gives up:
 
 Worth it for Wave 1. Revisit if playtest shows the family feels disconnected.
 
+### Campaign layer (async + sync overlap)
+
+On top of at-transition durable sync + reactive chat, a campaign-events layer makes async play feel like shared story. See **`ASYNC_SYNC_PLAY.md`** for the full model. Summary: the world clock advances whenever any character acts (monotonic, no races). When a character logs in after time has passed, a catch-up panel offers per-event choices — *"I was with them / I skipped it / tell me about it"* — so narrative threads reconverge retroactively without forcing synchronous play. Cross-era catch-up is the same mechanism (see `25_ERAS_AND_PROGRESSION.md` §"Interaction with async-sync play"): a character whose `personal_era` is behind the world advances through the catch-up panel as they opt into the beats that happened while they were gone. Gating arc-beat events stay pending until the character explicitly acknowledges them — which is how "key stuff must be experienced by all eligible" is enforced without making the world wait on the slowest player.
+
 ## Flow stack (Weaver inheritance)
 
 Flows nest. When a step handler returns `{ next: gotoFlow("merchant_arc") }`, the current flow pushes onto a stack. When the child flow completes (its terminal step is reached, or an explicit `done()` is returned), control returns to the parent's next step. Operations:

@@ -2,7 +2,14 @@
 
 *Flags for the implementing agent. Not edits to the spec — read this alongside, push back on the specific claim if it doesn't hold on contact with reality.*
 
-**Update 2026-04-19 (spec-review session):** sections §4 (QuickJS cold-start), §6 (95/4/1 path split), and §13 (inline-script authoring UX) are **resolved** by the session's decisions — no runtime isolate in Wave 1-3 (§4 moot), execution paths collapsed to two (§6 resolved), inline-script path deprecated (§13 resolved). The remaining items below are still open. See `17_DECISION_LOG.md` §"Revisions" for details.
+**Update 2026-04-19 (spec-review session):** sections §4 (QuickJS cold-start), §6 (95/4/1 path split), and §13 (inline-script authoring UX) are **resolved** — no runtime isolate in Wave 1-3 (§4 moot), execution paths collapsed to two (§6 resolved), inline-script path deprecated (§13 resolved). See `17_DECISION_LOG.md` for details.
+
+**Update 2026-04-20 (design-direction session):** section §3 (80KB bundle) **resolved (missed)** — actual build is 139KB server + 30KB client; target relaxed to 120-160KB. See §3 body. Several new claims queued for playtest measurement:
+
+- **Predictive prefetch hit rate** — spec claims prefetch saves 5-8s on the hot-case click; depends on players actually picking the prefetched options. Target: measure hit-rate during playtest; if <50% hit, revisit prefetch scope.
+- **Era-transition stage-shift cost** — spec claims ~$1-2 per transition. Measure during first real era advance on The Office.
+- **Art-curation weekly cost** — spec claims $0.50-1.50/week with text-only default. Measure during family's first month of playtest.
+- **Biome-palette auto-gen accuracy** — spec claims Opus produces palette hex that fits the biome. Measure palette-acceptance rate after import; if authors keep overriding, re-examine the prompt.
 
 The specs in this directory are opinionated and confident. Some of that confidence is load-bearing (blob architecture, entity/component model, three execution paths); some is load-bearing-but-unverified (cold-start budgets, cost estimates, bundle sizes, cache hit rates). This document is the unverified list.
 
@@ -36,15 +43,13 @@ When you implement something listed here, measure first, implement second, and s
 
 **Fallback:** Seed more aggressive biome-fallback art; regenerate in place over the fallback with a crossfade so the "forming" moment is less jarring.
 
-### 3. `~80KB initial bundle` target on mobile
+### 3. `~80KB initial bundle` target on mobile — **RESOLVED (missed)**
 
-**Claim** (`00_OVERVIEW.md` §6, `01_ARCHITECTURE.md`): Mobile-first with ≤80KB initial bundle.
+**Measured 2026-04-20** (`spec/LIMITATIONS_AND_GOTCHAS.md` §"Worth measuring but not yet"): current production build emits **139KB server + ~30KB client-gzipped**. The 80KB target was aspirational; reality is ~2x higher once Convex client + reactive subscriptions + Tailwind + auth + PWA shell land.
 
-**Why shaky:** Per `CONTEXT-HANDOFF.md`, the stock `sv create` SvelteKit scaffold is already ~15KB gzipped before any app code. By the time you add Convex client + reactive subscriptions + auth + a router surface + Tailwind runtime CSS + PWA shell, 80KB is optimistic. The spec doesn't describe which chunks are deferred.
+**Resolution:** target updated to **120-160KB initial client bundle**, honestly. Documented in `spec/00_OVERVIEW.md` principle #5 as the realistic ceiling. If a feature threatens to push past 160KB, it's a review signal to consider lazy-chunking before merge.
 
-**What to check first:** Measure the production bundle after Wave 0 Day 5-6 (first real route lands). If you're past 50KB before the world-bible-builder ships, the 80KB ceiling is already unreachable without aggressive code-splitting.
-
-**Fallback:** Relax to 120KB and be explicit about it. Or declare which surfaces are over-the-wire-on-first-load vs. lazy-chunked and budget accordingly.
+**Follow-up:** a real code-split audit hasn't happened yet. A 30-minute audit pass (`vite build --reporter verbose`, identify chunks-over-10KB, consider dynamic imports for rare surfaces) should land before Wave 2 ships. Tracked in FEATURE_REGISTRY under a future implementation task.
 
 ### 4. QuickJS WASM isolate cold-start
 

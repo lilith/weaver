@@ -358,6 +358,14 @@ Ships with the app. Used before bible is built, during theme regeneration, and o
 }
 ```
 
+## Stylization over photorealism
+
+Stylized style anchors produce more forgivable AI art than photorealism. Every family-scale playtest so far has observed the same failure mode with photoreal prompts: character inconsistency across scenes hits uncanny valley; locations "work" on day one and drift by day three. Stylized treatments absorb the same drift as *style*, not as *error*.
+
+**Bible-builder wizard quick-picks** in Step 3 (§Step 3 — Style anchor) omit photoreal options entirely. The suggested styles: Ghibli watercolor, chunky pixel art, ink & wash, cozy 3D render (stylized, not cinematic), storybook illustration, Nordic folk art, ink-and-halftone, flat-color cel, muted-noir illustration. "Describe your own" still allows photoreal if an author insists, but the copy nudges: *"Most worlds work better with a stylized anchor — AI art is more consistent when you embrace a visible style."*
+
+The quick-pick copy updates accordingly; existing Quiet Vale (cozy watercolor) and The Office (muted-noir + liminal-dread illustration) both already comply.
+
 ## Per-biome palette overrides
 
 Shipped in commit `e93c60e`. The world-level theme is the baseline; each biome can declare a small palette override that tints the location page when the player is in that biome. This makes the office feel fluorescent-cold, the sewer feel acid-green, the apartment feel warm-umber — without committing to whole per-biome themes.
@@ -382,10 +390,38 @@ palette:
 
 **When to use.** Biomes whose vibe meaningfully differs from the world's baseline. Most worlds won't bother for every biome. Example use from the Daily Grind authoring: office-dungeon biomes get cold fluorescents; apartment gets warm umber; coffee-shop gets the world default.
 
+## Auto-gen palettes on import (UX-05 resolution)
+
+When a world is imported via `scripts/import-world.mjs` / `convex/import.ts`, any biome that lacks an authored `palette:` block gets one generated automatically. This resolves UX-05 from `UX_PROPOSALS.md`: imported or invented biomes were falling through to the base theme, making "every biome looks the same color-wise" a visible gap.
+
+**Mechanism:**
+
+- After the bundle writes to DB, the import path iterates biomes missing `palette:` and enqueues a palette-gen action per biome via `ctx.scheduler.runAfter(0, internal.themes.genBiomePalette, { biome_entity_id, world_id })`.
+- Each gen is a single Opus call against:
+  - The biome's `name` + prose body.
+  - The biome's `establishing_shot_prompt` (if present).
+  - The world's `style_anchor.prompt_fragment`.
+  - Example output schema (the palette shape specified in `AUTHORING_AND_SYNC.md` §biomes / `10_THEME_GENERATION.md` §Per-biome palette overrides).
+- Opus returns `{ background_tint, ink_tint, accent_hue_shift, atmosphere }` as JSON; validated (strict `#[0-9a-f]{6}` hex check — see `LIMITATIONS_AND_GOTCHAS.md` §19 Bengali-digit hallucination retry); written to the biome entity's current version.
+- Retry once on bad output; if retry also fails, leave palette absent (biome falls through to world theme — acceptable fallback).
+
+**Cost:** ~$0.005 per biome (cached bible on subsequent calls). For a 7-biome world, ~$0.04 per import. Negligible.
+
+**Flag:** `flag.biome_palette_gen` — default off; toggle on per-world at the importer call. Once shipped after playtest, the flag default flips to on globally.
+
+**Triggered contexts:**
+
+1. `weaver import` on a world bundle where biomes lack `palette:`.
+2. A future importer step that the AI expansion loop invokes when it invents a new biome slug mid-play — the new biome entity gets a palette-gen queued the same way.
+3. A user-facing "regenerate palette for this biome" action in the world editor (Wave 2+).
+
+**Open consideration:** should auto-gen run on existing pre-retrofit biomes too? Recommendation: yes — a one-shot mutation `_dev.backfillBiomePalettes(world_id)` runs after the flag ships; any biome still missing a palette gets one. Idempotent (skips biomes that already have one).
+
 ## Cost
 
 - Theme generation: ~$0.02 per call (cached bible is 90% off).
 - Ornament SVGs (optional): ~$0.03 each, ~3-5 per theme.
-- Biome palette overrides: free (hand-authored in biome frontmatter; no LLM call).
+- Biome palette overrides (hand-authored): free (no LLM call).
+- Biome palette auto-gen on import: ~$0.005 per biome, ~$0.04 per typical world import.
 
 Total per theme including ornaments: ~$0.15 max; without ornaments, ~$0.02.

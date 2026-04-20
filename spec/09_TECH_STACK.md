@@ -139,6 +139,8 @@ export default defineSchema({
     owner_user_id: v.id("users"),
     content_rating: v.union(v.literal("family"), v.literal("teen"), v.literal("adult")),
     current_branch_id: v.optional(v.id("branches")),
+    active_era: v.number(),                   // default 1. Era-system authority (see 25_ERAS_AND_PROGRESSION.md).
+    arc_pressure: v.optional(v.any()),        // { <pressure_name>: 0-100, ... }; authored schema in bible.
     created_at: v.number(),
   }).index("by_owner", ["owner_user_id"]),
 
@@ -164,11 +166,25 @@ export default defineSchema({
     current_location_id: v.optional(v.id("entities")),
     state: v.any(), // inventory, hp, gold, etc.
     schema_version: v.number(),
+
+    // Era + progression (see 25_ERAS_AND_PROGRESSION.md)
+    personal_era: v.number(),                             // default 1. Highest arc-beat era this character has acknowledged.
+    arc_beats_acknowledged: v.array(v.string()),          // event_ids from campaign_events
+    personal_chronicle: v.optional(v.string()),           // AI-woven summary of this character's journey across eras
+
+    // Async-sync campaign (see ASYNC_SYNC_PLAY.md)
+    last_caught_up_at: v.optional(v.number()),            // real_time of last acknowledged campaign event
+
+    // Feature preferences
+    prefer_prefetch: v.optional(v.boolean()),             // text prefetch opt-in; default true for adults, false for minors
+    art_mode_preferred: v.optional(v.string()),           // "ambient_palette" | "banner" | "tarot_card" | ... (see ART_CURATION.md)
+
     created_at: v.number(),
     updated_at: v.number(),
   })
     .index("by_user_world", ["user_id", "world_id"])
-    .index("by_branch", ["branch_id"]),
+    .index("by_branch", ["branch_id"])
+    .index("by_world_user", ["world_id", "user_id"]),
 
   // Content-addressed blob store (see 12_BLOB_STORAGE.md). Global — no world_id.
   // GC is mark-sweep (periodic walk of live heads), not refcount-driven.
@@ -242,6 +258,10 @@ export default defineSchema({
     // Drafts are author-only; canonical entities are shared per world-membership.
     draft: v.optional(v.boolean()),         // absent reads as false
     expanded_from_entity_id: v.optional(v.id("entities")),  // parent location for expansions
+    visited_at: v.optional(v.number()),     // null until first visit; distinguishes prefetched-pending drafts
+
+    // Era-aware state (see 25_ERAS_AND_PROGRESSION.md). Absent on entities that don't change across eras.
+    era_version_map: v.optional(v.any()),   // { 1: version_number, 2: version_number, ... }
 
     created_at: v.number(),
     updated_at: v.number(),
@@ -249,7 +269,8 @@ export default defineSchema({
     .index("by_branch_type", ["branch_id", "type"])
     .index("by_world_type", ["world_id", "type"])
     .index("by_author", ["author_user_id"])
-    .index("by_expansion_parent", ["expanded_from_entity_id"]),
+    .index("by_expansion_parent", ["expanded_from_entity_id"])
+    .index("by_draft_unvisited", ["draft", "visited_at"]),  // for prefetch-pending sweep
 
   components: defineTable({
     entity_id: v.id("entities"),
@@ -418,19 +439,149 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_world_active", ["world_id", "active"]),
 
-  // Artifact version history (for rollback; see 11_PROMPT_EDITING.md, 12_BLOB_STORAGE.md)
+  // Artifact version history (for rollback; see 11_PROMPT_EDITING.md, 12_BLOB_STORAGE.md, 25_ERAS_AND_PROGRESSION.md)
   artifact_versions: defineTable({
     artifact_entity_id: v.id("entities"),
     version: v.number(),
+    era: v.number(),                        // default 1. Which era this version belongs to.
     blob_hash: v.string(),                  // canonicalized payload in blob store
     author_user_id: v.id("users"),
     author_pseudonym: v.string(),
-    edit_kind: v.string(),                  // "create" | "edit_prompt" | "edit_direct" | "restore"
+    edit_kind: v.string(),                  // "create" | "edit_prompt" | "edit_direct" | "restore" | "stage_shift"
     reason: v.optional(v.string()),
     created_at: v.number(),
   })
     .index("by_artifact_version", ["artifact_entity_id", "version"])
+    .index("by_artifact_era", ["artifact_entity_id", "era"])
     .index("by_blob", ["blob_hash"]),
+
+  // Art curation (see ART_CURATION.md). Replaces the single entities.art_blob_hash
+  // pair with a multi-mode multi-variant wardrobe.
+  entity_art_renderings: defineTable({
+    world_id: v.id("worlds"),
+    entity_id: v.id("entities"),
+    mode: v.string(),                       // "ambient_palette" | "banner" | "portrait_badge" | "tarot_card" | "illumination" | ...
+    variant_index: v.number(),              // 1, 2, 3 within a mode; incremented per regen
+    era: v.optional(v.number()),            // era-specific rendering (see 25_ERAS_AND_PROGRESSION.md); absent = era-agnostic
+    blob_hash: v.optional(v.string()),      // set when ready; absent while queued/generating
+    status: v.union(
+      v.literal("queued"),
+      v.literal("generating"),
+      v.literal("ready"),
+      v.literal("failed"),
+      v.literal("hidden"),                  // soft-deleted
+    ),
+    prompt_used: v.string(),                // for regen / debug / feedback context
+    requested_by_user_id: v.id("users"),
+    requested_by_character_id: v.optional(v.id("characters")),
+    upvote_count: v.number(),               // denormalized from art_feedback; updated on vote
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_entity_mode", ["entity_id", "mode", "upvote_count"])
+    .index("by_entity_mode_era", ["entity_id", "mode", "era"])
+    .index("by_world", ["world_id"])
+    .index("by_status", ["status", "created_at"]),
+
+  art_feedback: defineTable({
+    world_id: v.id("worlds"),
+    rendering_id: v.id("entity_art_renderings"),
+    user_id: v.id("users"),
+    action: v.union(
+      v.literal("upvote"),
+      v.literal("downvote"),
+      v.literal("delete"),
+      v.literal("undelete"),
+      v.literal("regen_requested"),
+      v.literal("reference_board_add"),
+      v.literal("feedback_comment"),
+    ),
+    comment: v.optional(v.string()),        // for feedback_comment action
+    created_at: v.number(),
+  })
+    .index("by_rendering", ["rendering_id"])
+    .index("by_world_user", ["world_id", "user_id"]),
+
+  art_reference_board: defineTable({
+    world_id: v.id("worlds"),
+    rendering_id: v.id("entity_art_renderings"),
+    kind: v.string(),                       // "style" | "character:<slug>" | "biome:<slug>" | "location:<slug>" | "mode:<mode-name>"
+    added_by_user_id: v.id("users"),
+    caption: v.optional(v.string()),
+    order: v.number(),
+    created_at: v.number(),
+  })
+    .index("by_world_kind", ["world_id", "kind", "order"]),
+
+  // Async-sync campaign (see ASYNC_SYNC_PLAY.md). Append-only log of campaign-level events.
+  campaign_events: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    character_id: v.id("characters"),       // who acted
+    event_type: v.string(),                 // "entered_biome" | "combat_start" | "dialogue" | "arc_beat" | ...
+    summary: v.string(),                    // 1-sentence AI-or-authored summary
+    world_time_iso: v.optional(v.string()), // when, in world-time (if clock enabled)
+    real_time: v.number(),                  // when, in wall-time (for sorting)
+    location_entity_id: v.optional(v.id("entities")),
+    biome: v.optional(v.string()),
+    era: v.number(),                        // which era this event happened in
+    gating: v.optional(v.boolean()),        // arc-beat events that block personal-era advance until acknowledged
+    payload: v.optional(v.any()),           // event-specific extras
+  })
+    .index("by_world_real_time", ["world_id", "real_time"])
+    .index("by_world_character", ["world_id", "character_id"])
+    .index("by_gating", ["world_id", "gating"]),
+
+  // Chronicles — authored/AI-woven era-transition narratives (see 25_ERAS_AND_PROGRESSION.md).
+  // Read-only history; visible in the journal under a World Chronicle section.
+  chronicles: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    era_from: v.number(),
+    era_to: v.number(),
+    summary_blob_hash: v.string(),              // AI-generated era-transition narrative
+    stage_shift_manifest_blob_hash: v.string(), // what entities changed + how (audit trail)
+    authored_at: v.number(),
+    authored_by_user_id: v.id("users"),         // who triggered the advance
+  })
+    .index("by_world_era", ["world_id", "era_to"]),
+
+  // NPC memory (see 24_NPC_AND_NARRATIVE_PROMPTS.md). Per-subject event log filtered into dialogue prompts.
+  npc_memory: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    subject_entity_id: v.id("entities"),        // whose memory this is — NPC or character
+    event_type: v.string(),                     // "the_player_visited" | "dialogue_turn" | ...
+    summary: v.string(),                        // one-line what-happened
+    salience: v.union(
+      v.literal("low"), v.literal("medium"), v.literal("high"),
+    ),
+    turn: v.number(),                           // world turn counter at write-time
+    era: v.optional(v.number()),                // era in which this memory was formed
+    involved_entity_ids: v.array(v.id("entities")),  // who else was in it
+    payload: v.optional(v.any()),               // optional structured detail
+    created_at: v.number(),
+  })
+    .index("by_subject_turn", ["subject_entity_id", "turn"])
+    .index("by_world_subject", ["world_id", "subject_entity_id"]),
+
+  // Feature flags (see FEATURE_REGISTRY.md). Runtime gating for pullable features.
+  // Scope resolution precedence: character → user → world → global. Default is registry-driven.
+  feature_flags: defineTable({
+    flag_key: v.string(),                       // "flag.art_curation" | "flag.eras" | ...
+    scope_kind: v.union(
+      v.literal("global"),
+      v.literal("world"),
+      v.literal("user"),
+      v.literal("character"),
+    ),
+    scope_id: v.optional(v.string()),           // null for global; world_id / user_id / character_id otherwise
+    enabled: v.boolean(),
+    set_by_user_id: v.optional(v.id("users")),
+    set_at: v.number(),
+    notes: v.optional(v.string()),
+  })
+    .index("by_key_scope", ["flag_key", "scope_kind", "scope_id"]),
 })
 ```
 

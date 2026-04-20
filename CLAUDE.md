@@ -43,19 +43,50 @@ A spec-review session shipped decisions that change direction on in-flight work.
 
 Velocity note: Lilith clarified that agent-fleet velocity makes the Wave 1 scope realistic (a 1-week estimate = ~30 min real time). Don't defensively scope-cut — keep the full Wave 1 ambition and ship it.
 
-## Wave 2 targets (POSTER_CHILD asks — `spec/20_POSTER_CHILD_CAPABILITIES.md`)
+## Wave 2 targets — consolidated
 
-Five capability shifts needed to make The Office (imported from `backstory/stories/argus-daily-grind/worlds/the-office/`) feel like the LitRPG it is rather than a flat location tree. Quiet Vale is unaffected — everything is additive.
+Four feature clusters are designed and registry-tracked; all gated behind flags (default off) and playtest-driven to ship. Full status surface in **`FEATURE_REGISTRY.md`** at repo root. Start there before picking up any feature.
 
-| Ask | Spec | Status |
-|---|---|---|
-| 1. Biome rules (time_dilation, hooks, spawn_tables) | `21_BIOME_RULES.md` | ⏳ pending |
-| 2. Item taxonomy (`kind:` + first-class orbs) | `22_ITEM_TAXONOMY.md` | ⏳ pending |
-| 3. World clock (`hhmm`, day-of-week, `tick_minutes`) | `23_WORLD_CLOCK.md` | ✅ shipped `a6985aa` |
-| 4. NPC memory auto-injected into dialogue | `24_NPC_AND_NARRATIVE_PROMPTS.md` | ⏳ pending |
-| 5. Shared `assembleNarrativePrompt` helper | `24_NPC_AND_NARRATIVE_PROMPTS.md` | ✅ shipped `d761c03` (`convex/narrative.ts`) |
+### POSTER_CHILD asks — `spec/20_POSTER_CHILD_CAPABILITIES.md`
 
-Recommended order for the remaining three (from `20_POSTER_CHILD_CAPABILITIES.md` §Sequencing): Ask 1 (biome rules) → Ask 2 (items) → Ask 4 (NPC memory). Each is ~3-5 hours at current velocity. Every mutation lands with a matching isolation-adversarial test (rule 7).
+| Ask | Spec | Status | Flag |
+|---|---|---|---|
+| 1. Biome rules (time_dilation, hooks, spawn_tables) | `21_BIOME_RULES.md` | designed | `flag.biome_rules` |
+| 2. Item taxonomy (`kind:` + first-class orbs) | `22_ITEM_TAXONOMY.md` | designed | `flag.item_taxonomy` |
+| 3. World clock (`hhmm`, day-of-week, `tick_minutes`) | `23_WORLD_CLOCK.md` | ✅ shipped `a6985aa` | `flag.world_clock` (on) |
+| 4. NPC memory auto-injected into dialogue | `24_NPC_AND_NARRATIVE_PROMPTS.md` | designed | `flag.npc_memory` |
+| 5. Shared `assembleNarrativePrompt` helper | `24_NPC_AND_NARRATIVE_PROMPTS.md` | ✅ shipped `d761c03` | — (library) |
+| 7. Party composition | **subsumed** by async-sync campaign | — | — |
+
+### Design-direction additions (2026-04-20)
+
+| Feature | Spec | Status | Flag |
+|---|---|---|---|
+| Art curation (wardrobe of modes, eye-icon, communal variants) | `ART_CURATION.md` | designed | `flag.art_curation` |
+| Expansion streaming (Opus stream + skeleton render) | `04_EXPANSION_LOOP.md` §Streaming | designed | `flag.expansion_streaming` |
+| Predictive text prefetch (click-into-nowhere) | `04_EXPANSION_LOOP.md` §Predictive text prefetch | designed | `flag.text_prefetch` |
+| Async-sync campaign (catch-up panels) | `ASYNC_SYNC_PLAY.md` | designed | `flag.campaign_events` |
+| Eras and progression (per-entity × per-era state) | `25_ERAS_AND_PROGRESSION.md` | designed | `flag.eras` |
+| Biome palette auto-gen (UX-05 resolution) | `10_THEME_GENERATION.md` §Auto-gen | designed | `flag.biome_palette_gen` |
+
+### Sprawl-resistance architecture
+
+**`FEATURE_REGISTRY.md`** + **`PLAYTEST_LOG.md`** + per-spec status headers = every feature is pullable by flag flip, its design survives context-compaction, and flag transitions are evidence-driven. The code-agent side of this (wire the `isFeatureEnabled` helper + retrofit existing seams) is listed in FEATURE_REGISTRY's "Immediate TODOs" section — it's the next implementation pass when the code agent resumes.
+
+### Recommended sequencing for the code agent
+
+The registry carries dependencies (`deps` column). Suggested next-session order:
+
+1. **Wire `feature_flags` infrastructure** — schema already in `09_TECH_STACK.md`; add `isFeatureEnabled` helper in `packages/engine/src/flags/`; seed flags per registry defaults.
+2. **Pick from `designed` features that have no pending deps** — start with ART_CURATION (blocks nothing, frees big playtest surface), or text-prefetch + streaming (both improve live play).
+3. **Every implementation PR adds its adversarial-isolation test** per URGENT rule 7.
+4. **Every feature lands at status `implementing` in the registry**, then `playtesting` after family-instance flag-on, then `shipped` after PLAYTEST_LOG entries warrant.
+
+## Open design questions (during playtest)
+
+- **UX-01 (time-gated option hiding).** Landed as (b) gray-out-with-hint v1; (d) authored `hidden_until` / `teaser_when` fields to follow after playtest observations. See `UX_PROPOSALS.md`.
+- **UX-03 (wait affordance).** Trying (b) global "wait a moment" button. If family finds it breaks flow, fall back to per-location implicit waits or remove entirely. Playtest-driven.
+- **Art mode v1 list** — starting with 5 modes (ambient_palette, banner+CSS-variants, portrait_badge, tarot_card, illumination). Add postcard / map_view / hero_full as v2 if family wants them.
 
 ## Open design questions — main agent picks
 
@@ -198,16 +229,16 @@ it holds one story (`argus-daily-grind`, 789K words across 5 volumes).
 
 ## Investigation notes
 
-- Convex `v.bytes()` accepts `ArrayBuffer`, not `Uint8Array` — writers must slice: `bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)`. Readers get `ArrayBuffer` back and wrap in `new Uint8Array(...)`. Handled in `convex/blobs.ts`.
-- `@noble/hashes` requires the `.js` suffix in import paths (`@noble/hashes/blake3.js`, not `@noble/hashes/blake3`) — Convex's esbuild honors the package's strict `exports` map.
-- SvelteKit `Write` tool over existing files requires a prior `Read`. When scaffolding Day-2 routes, the stock `+page.svelte` and `+layout.svelte` must be Read before Write, or the edit silently no-ops and the deploy serves the old content. Burn memory: always Read before Write on scaffolded files.
-- **Convex query vs mutation `ctx.db` (2026-04-19).** Queries don't have `ctx.db.patch` — only mutations do. Session-resolver helpers that touch DB must be read-only if ever called from a query. We dropped the `last_used_at` touch entirely; reintroduce only via a mutation-only helper.
-- **SvelteKit form actions don't get `parent()` (2026-04-19).** Only `load` functions do. Actions that need parent data must re-query via `convexServer()` inside the action. Losing half an hour to `parent is not a function`.
-- **SvelteKit `throw redirect()` inside try/catch (2026-04-19).** Redirects are thrown, so generic catch swallows them. Either restructure so `redirect()` runs outside the try, or `isRedirect(e) → throw e` before falling into `fail()`.
-- **Cloudflare Workers runtime is not Node (2026-04-19).** `@sentry/sveltekit` (server) and any package depending on Node builtins break at cold-start with `1101 Worker threw exception`. `pnpm dev` runs Vite's Node runtime and will lie about compatibility. To preview Workers behavior locally: `pnpm -C apps/play build && wrangler pages dev apps/play/.svelte-kit/cloudflare` — that IS the prod runtime. Adding this as a pre-push gate.
-- **`$env/static/public` requires every imported key declared in every environment (2026-04-19).** Optional public env vars should be read via `import.meta.env.PUBLIC_X` — returns `undefined` for unset keys without build-time error.
-- **`convex/_generated/api.js` is ESM; root `package.json` isn't `"type": "module"` (2026-04-19).** Added `convex/package.json` with `"type": "module"` so Node/Playwright can import the generated API. SvelteKit's Vite doesn't care — this only matters for raw-Node consumers (tests, scripts).
-- **Dev loop speed-up priorities (from post-mortem of the Sentry/Workers bug).** (1) `wrangler pages dev` against built output before every push; (2) Playwright run against Cloudflare Pages preview URL after push, before merge; (3) `wrangler pages deployment tail` streaming during test runs; (4) static dep-scan for Node-only imports in files that will ship to Workers. See `apps/play/package.json` scripts for wiring.
+**Canonical consolidated list: `spec/LIMITATIONS_AND_GOTCHAS.md`.** 35 hard-won lessons from build (Convex runtime, SvelteKit 2 quirks, Cloudflare Workers != Node, fal.ai / Anthropic API quirks, ESM packaging, E2E harness, dev-loop velocity). Read that doc for the complete set. Hot items that cost the most time stay inline here as quick reference:
+
+- **Convex `v.bytes()` accepts `ArrayBuffer`, not `Uint8Array`** — slice at boundary. See gotcha #1.
+- **`@noble/hashes` requires `.js` suffix** in import paths. Gotcha #20.
+- **Read before Write on scaffolded files** — otherwise Claude Code's Write silently no-ops. Gotcha #14.
+- **Convex query vs mutation `ctx.db`** — queries are read-only; no `.patch`. Gotcha #5.
+- **`pnpm dev` ≠ Pages runtime** — use `wrangler pages dev apps/play/.svelte-kit/cloudflare` as pre-push gate. Gotcha #15 + #32.
+- **fal.ai key format: `<uuid>:<secret>`** — not just `<uuid>`. Gotcha #17.
+
+Everything else: `spec/LIMITATIONS_AND_GOTCHAS.md`. When encountering a new gotcha, add it there, not here.
 
 ## Spec status
 

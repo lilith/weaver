@@ -205,10 +205,18 @@ No schema change needed. The guidance is authorial, documented in
 
 ## What's NOT in this spec
 
-Tier 3–4 asks from `POSTER_CHILD.md` (party composition, named
-encounters, base-builder module, orb-icon gen, relationship-graph
-viz) are deferred to Wave 3+. The Office v1 can ship playable before
-any of them.
+Tier 3–4 asks from `POSTER_CHILD.md` (named encounters, base-builder
+module, orb-icon gen, relationship-graph viz) are deferred to Wave 3+.
+The Office v1 can ship playable before any of them.
+
+**Ask 7 (party composition)** is **subsumed** by the async-sync play
+model in `ASYNC_SYNC_PLAY.md` (shipped as a designed-status spec
+2026-04-20). The campaign-events catch-up panel produces emergent
+party dynamics: characters "were with" each other at events, or weren't.
+`world.party[]` collapses to a derived view of characters whose last
+event was in the same location — no dedicated schema, no separate
+composition mechanic. If playtesting shows the emergent pattern feels
+insufficient, a more structured party system can layer on top later.
 
 ## Sequencing
 
