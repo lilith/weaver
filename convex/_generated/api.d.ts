@@ -20,6 +20,7 @@ import type * as cost from "../cost.js";
 import type * as crons from "../crons.js";
 import type * as diagnostics from "../diagnostics.js";
 import type * as effects from "../effects.js";
+import type * as entity_edit from "../entity_edit.js";
 import type * as expansion from "../expansion.js";
 import type * as flags from "../flags.js";
 import type * as flows from "../flows.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   diagnostics: typeof diagnostics;
   effects: typeof effects;
+  entity_edit: typeof entity_edit;
   expansion: typeof expansion;
   flags: typeof flags;
   flows: typeof flows;
