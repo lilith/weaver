@@ -240,6 +240,24 @@ The manifest declares the subset of reads/writes/component-types/predicates the 
 
 Module execution happens inside a QuickJS WASM isolate (optional, for user-authored modules) or trusted V8 (for vetted modules). Limits: 50ms wall-clock, 10MB memory, no network, no I/O beyond the proxy.
 
+## Cross-cutting hooks (`.always.` — future)
+
+The original `weaver-lua` had an `.always.` convention: named code blocks that run on every turn, regardless of which location or flow the player is in. Typical uses: weather progression, time-of-day advance, resource regen (energy, hunger), ambient NPC state updates, chronicle tick.
+
+Wave 1 and Wave 2 **don't ship this**. They ship single-subscription hooks at module level (`arrive_location`, `new_day`, `idle_player`, etc.) — which cover 80% of what `.always.` blocks were used for in the original. True always-on cross-cutting code is a Wave 3 concern, and the design should land *before* the Wave 2 module system is frozen so the module manifest can declare `always` subscriptions cleanly.
+
+Rough shape to aim for when it's time:
+
+- A module's manifest can declare `always: { tick, every: "turn" | "minute" | "day" }`.
+- The runtime maintains a registry of always-handlers per (world, branch), compiled once.
+- Each turn, the runtime executes all subscribed `always` handlers in declared order, inside the same capability-sandbox proxy as normal module code.
+- `always` handlers are not allowed to produce narrative (no `yield p`); they mutate world-scope state only. Any narrative they want surfaced goes through a named event the location layer can consume.
+- Execution budget per tick across all `always` handlers combined: <5ms for trusted, <20ms for user-authored. Exceeding the budget logs and skips (fail-open, not fail-closed — never block a turn).
+
+Note: fail-open is a deliberate choice. An `.always.` bug should never brick gameplay. Drop a tick, log it, move on; users file a bug report.
+
+Flag this in `08_WAVE_1_DISPATCH.md` as a known non-Wave-1 concern, and in the module-interface design when that spec lands, so the manifest format has room for `always` without a breaking revision later.
+
 ## Flow stack (Weaver inheritance)
 
 Flows nest. When a module calls `yield gotoFlow("merchant_arc")`, the current flow pushes onto a stack. When the child flow completes (`done()`), control returns to the parent. Operations:
