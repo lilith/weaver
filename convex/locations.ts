@@ -214,6 +214,7 @@ export const applyOption = mutation({
     let newLocationSlug: string | null = null;
     let newLocationEntity: Doc<"entities"> | null = null;
     let needsExpansion: { hint: string } | null = null;
+    let prefetchedHit = false;
     if (gotoSlug) {
       const target = await ctx.db
         .query("entities")
@@ -228,13 +229,37 @@ export const applyOption = mutation({
         newLocationEntity = target as Doc<"entities">;
         newLocationSlug = target.slug;
       } else {
-        // Unresolved target — signal the client to chain into expansion.
-        needsExpansion = { hint: option.label };
+        // Unresolved target — check if a prefetched draft is waiting for this
+        // exact (parent, option label). If so, use it. Otherwise signal
+        // the client to chain into expansion.
+        const prefetched = await ctx.db
+          .query("entities")
+          .withIndex("by_prefetch_source", (q) =>
+            q
+              .eq("branch_id", branch_id)
+              .eq("prefetched_from_entity_id", entity._id)
+              .eq("prefetched_from_option_label", option.label),
+          )
+          .first();
+        if (prefetched) {
+          newLocationEntity = prefetched as Doc<"entities">;
+          newLocationSlug = prefetched.slug;
+          prefetchedHit = true;
+        } else {
+          needsExpansion = { hint: option.label };
+        }
       }
     }
 
     let closedJourneyId: Id<"journeys"> | null = null;
     if (newLocationEntity) {
+      // First-visit stamp: if this is a draft that nobody has landed on
+      // yet (e.g., a prefetched draft just got picked), record the visit
+      // time. Canonical entities also get it on first visit — drafts
+      // cross the prefetch → visited threshold here.
+      if (newLocationEntity.visited_at == null) {
+        await ctx.db.patch(newLocationEntity._id, { visited_at: Date.now() });
+      }
       const j = await recordJourneyTransition(ctx, {
         world_id,
         branch_id,
@@ -270,6 +295,7 @@ export const applyOption = mutation({
       new_location_slug: newLocationSlug,
       needs_expansion: needsExpansion,
       closed_journey_id: closedJourneyId,
+      prefetched_hit: prefetchedHit,
     };
   },
 });

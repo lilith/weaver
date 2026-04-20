@@ -105,6 +105,16 @@ export default defineSchema({
     // For drafts: the entity they were expanded from, so saveToMap
     // knows which parent's options to extend.
     expanded_from_entity_id: v.optional(v.id("entities")),
+    // First-visit timestamp. Null on prefetched drafts until a character
+    // actually lands here. Mark-sweep reclaims draft + visited_at=null
+    // entities older than 30 days. Canonical (non-draft) entities get
+    // this set once on first author-resolve.
+    visited_at: v.optional(v.number()),
+    // If this entity is a prefetched draft, records the parent location
+    // and the option label that triggered it — so applyOption can find
+    // the pre-warmed draft instead of chaining to expansion.
+    prefetched_from_entity_id: v.optional(v.id("entities")),
+    prefetched_from_option_label: v.optional(v.string()),
     // Scene / portrait art for this entity — blob hash (stored in R2).
     // Regenerates on explicit user action; otherwise sticky once set.
     art_blob_hash: v.optional(v.string()),
@@ -122,7 +132,13 @@ export default defineSchema({
   })
     .index("by_branch_type", ["branch_id", "type"])
     .index("by_branch_type_slug", ["branch_id", "type", "slug"])
-    .index("by_world_author", ["world_id", "author_user_id"]),
+    .index("by_world_author", ["world_id", "author_user_id"])
+    // Prefetch lookup: find a pre-warmed draft for (parent, option label).
+    .index("by_prefetch_source", [
+      "branch_id",
+      "prefetched_from_entity_id",
+      "prefetched_from_option_label",
+    ]),
 
   components: defineTable({
     world_id: v.id("worlds"),

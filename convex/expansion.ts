@@ -15,6 +15,7 @@ import { resolveSession, resolveMember } from "./sessions.js";
 import { writeJSONBlob, readJSONBlob } from "./blobs.js";
 import { recordJourneyTransition } from "./journeys.js";
 import { scheduleArtForEntity } from "./art.js";
+import { isFeatureEnabled } from "./flags.js";
 
 const MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 2048;
@@ -175,19 +176,37 @@ export const loadExpansionContext = internalQuery({
   },
 });
 
-/** Internal mutation: writes the new location + version + character move. */
+/** Internal mutation: writes the new location + version + (unless prefetch
+ *  mode) moves the character. In prefetch mode we insert the draft and
+ *  stamp `prefetched_from_*` so applyOption can find it later, but the
+ *  character stays where they are and no journey row is touched. */
 export const insertExpandedLocation = internalMutation({
   args: {
     session_token: v.string(),
     world_id: v.id("worlds"),
     parent_location_slug: v.string(),
     location: v.any(),
+    // "expand" (default) = create draft + move character.
+    // "prefetch" = create draft pre-attached to (parent, option_label), no move.
+    mode: v.optional(v.union(v.literal("expand"), v.literal("prefetch"))),
+    prefetched_from_option_label: v.optional(v.string()),
   },
-  handler: async (ctx, { session_token, world_id, parent_location_slug, location }) => {
+  handler: async (
+    ctx,
+    {
+      session_token,
+      world_id,
+      parent_location_slug,
+      location,
+      mode,
+      prefetched_from_option_label,
+    },
+  ) => {
     const { user, user_id } = await resolveMember(ctx as any, session_token, world_id);
     const world = await ctx.db.get(world_id);
     if (!world?.current_branch_id) throw new Error("no current branch");
     const branch_id = world.current_branch_id;
+    const effectiveMode = mode ?? "expand";
 
     const loc = location as Location;
 
@@ -231,6 +250,12 @@ export const insertExpandedLocation = internalMutation({
       author_pseudonym: user.display_name ?? user.email,
       draft: true,
       expanded_from_entity_id: parentEntity?._id,
+      // Prefetch-specific stamps so applyOption can discover this draft.
+      prefetched_from_entity_id:
+        effectiveMode === "prefetch" ? parentEntity?._id : undefined,
+      prefetched_from_option_label:
+        effectiveMode === "prefetch" ? prefetched_from_option_label : undefined,
+      visited_at: effectiveMode === "prefetch" ? undefined : now,
       created_at: now,
       updated_at: now,
     });
@@ -244,9 +269,16 @@ export const insertExpandedLocation = internalMutation({
       author_user_id: user_id,
       author_pseudonym: user.display_name ?? user.email,
       edit_kind: "create",
-      reason: "expansion",
+      reason: effectiveMode === "prefetch" ? "prefetch" : "expansion",
       created_at: now,
     });
+
+    if (effectiveMode === "prefetch") {
+      // Schedule art but don't move the character — the draft is
+      // dormant until someone actually picks the triggering option.
+      await scheduleArtForEntity(ctx, entityId);
+      return { new_location_slug: finalSlug, mode: "prefetch" as const };
+    }
 
     // Move the caller's character to the new location.
     const character = await ctx.db
@@ -275,9 +307,280 @@ export const insertExpandedLocation = internalMutation({
     // appears on next visit (or refresh) when FLUX finishes.
     await scheduleArtForEntity(ctx, entityId);
 
-    return { new_location_slug: finalSlug };
+    return { new_location_slug: finalSlug, mode: "expand" as const };
   },
 });
+
+// ---------------------------------------------------------------
+// Prefetch — speculative expansion (feature #14, spec 04 §Predictive
+// text prefetch). Flag-gated (`flag.text_prefetch`). Idempotent per
+// (parent, option label). Hard caps: max 3 prefetches per call,
+// max 20 unvisited prefetched drafts per world.
+
+const PREFETCH_MAX_PER_CALL = 3;
+const PREFETCH_MAX_UNVISITED_PER_WORLD = 20;
+
+/** Check if a prefetched draft already exists for (parent_entity_id, option_label). */
+export const findPrefetchedDraft = internalQuery({
+  args: {
+    branch_id: v.id("branches"),
+    parent_entity_id: v.id("entities"),
+    option_label: v.string(),
+  },
+  handler: async (ctx, { branch_id, parent_entity_id, option_label }) => {
+    const row = await ctx.db
+      .query("entities")
+      .withIndex("by_prefetch_source", (q) =>
+        q
+          .eq("branch_id", branch_id)
+          .eq("prefetched_from_entity_id", parent_entity_id)
+          .eq("prefetched_from_option_label", option_label),
+      )
+      .first();
+    return row ? { entity_id: row._id, slug: row.slug, visited_at: row.visited_at ?? null } : null;
+  },
+});
+
+/** Count unvisited prefetched drafts in a world (for cap enforcement). */
+export const countUnvisitedPrefetches = internalQuery({
+  args: { world_id: v.id("worlds") },
+  handler: async (ctx, { world_id }) => {
+    const world = await ctx.db.get(world_id);
+    if (!world?.current_branch_id) return 0;
+    const rows = await ctx.db
+      .query("entities")
+      .withIndex("by_prefetch_source", (q) =>
+        q.eq("branch_id", world.current_branch_id!),
+      )
+      .collect();
+    return rows.filter(
+      (r) => r.draft === true && r.visited_at == null && r.prefetched_from_entity_id,
+    ).length;
+  },
+});
+
+/** Ensure prefetches for unresolved options on a given location. Flag-gated,
+ *  idempotent per (parent, option label), capped. Returns the list of
+ *  {option_label, status} where status is one of:
+ *    - "ready"    : a prefetched draft already existed
+ *    - "fetching" : we just enqueued a prefetch
+ *    - "skipped"  : capped / flag off / target resolves
+ */
+export const ensurePrefetched = action({
+  args: {
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    location_slug: v.string(),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_id, location_slug },
+  ): Promise<{
+    flag: boolean;
+    options: Array<{ option_label: string; option_index: number; status: string; prefetched_slug?: string }>;
+  }> => {
+    const info = await ctx.runQuery(internal.expansion.prefetchContext, {
+      session_token,
+      world_id,
+      location_slug,
+    });
+    if (!info.flag_on)
+      return { flag: false, options: info.options.map((o: any) => ({ ...o, status: "skipped" })) };
+
+    const unvisited = await ctx.runQuery(internal.expansion.countUnvisitedPrefetches, {
+      world_id,
+    });
+    if (unvisited >= PREFETCH_MAX_UNVISITED_PER_WORLD) {
+      return {
+        flag: true,
+        options: info.options.map((o: any) => ({ ...o, status: "skipped" })),
+      };
+    }
+
+    const out: Array<{
+      option_label: string;
+      option_index: number;
+      status: string;
+      prefetched_slug?: string;
+    }> = [];
+    let fetchesStarted = 0;
+    for (const opt of info.options) {
+      if (fetchesStarted >= PREFETCH_MAX_PER_CALL) {
+        out.push({ ...opt, status: "skipped" });
+        continue;
+      }
+      // Already prefetched?
+      const existing = await ctx.runQuery(internal.expansion.findPrefetchedDraft, {
+        branch_id: info.branch_id,
+        parent_entity_id: info.parent_entity_id,
+        option_label: opt.option_label,
+      });
+      if (existing) {
+        out.push({ ...opt, status: "ready", prefetched_slug: existing.slug });
+        continue;
+      }
+      // Schedule the actual prefetch fire-and-forget. The scheduler
+      // boundary lets the current query return quickly; Opus call + DB
+      // writes happen in the background.
+      await ctx.scheduler.runAfter(0, internal.expansion.runPrefetch, {
+        session_token,
+        world_id,
+        location_slug,
+        option_label: opt.option_label,
+      });
+      out.push({ ...opt, status: "fetching" });
+      fetchesStarted++;
+    }
+    return { flag: true, options: out };
+  },
+});
+
+/** Internal query: load everything ensurePrefetched needs. */
+export const prefetchContext = internalQuery({
+  args: {
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    location_slug: v.string(),
+  },
+  handler: async (ctx, { session_token, world_id, location_slug }) => {
+    const { user_id } = await resolveMember(ctx as any, session_token, world_id);
+    const world = await ctx.db.get(world_id);
+    if (!world?.current_branch_id) throw new Error("world has no current branch");
+    const branch_id = world.current_branch_id;
+    const parent = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q) =>
+        q
+          .eq("branch_id", branch_id)
+          .eq("type", "location")
+          .eq("slug", location_slug),
+      )
+      .first();
+    if (!parent) throw new Error("parent not found");
+    const payload = await readAuthoredPayload<Record<string, unknown>>(
+      ctx as any,
+      parent as any,
+    );
+    const rawOpts = Array.isArray((payload as any).options)
+      ? ((payload as any).options as Array<{ label: string; target?: string }>)
+      : [];
+    // Find unresolved-target options.
+    const options: Array<{ option_label: string; option_index: number }> = [];
+    for (let i = 0; i < rawOpts.length; i++) {
+      const o = rawOpts[i];
+      if (!o.target) continue; // no target = say-only; nothing to prefetch
+      const exists = await ctx.db
+        .query("entities")
+        .withIndex("by_branch_type_slug", (q) =>
+          q
+            .eq("branch_id", branch_id)
+            .eq("type", "location")
+            .eq("slug", o.target!),
+        )
+        .first();
+      if (!exists) {
+        options.push({ option_label: o.label, option_index: i });
+      }
+    }
+    // Flag check for this (world, user) combination.
+    const flag_on = await isFeatureEnabled(ctx, "flag.text_prefetch", {
+      user_id,
+      world_id,
+    });
+    return {
+      flag_on,
+      branch_id,
+      parent_entity_id: parent._id,
+      options,
+    };
+  },
+});
+
+/** The actual Opus call — scheduled from ensurePrefetched. */
+export const runPrefetch = action({
+  args: {
+    session_token: v.string(),
+    world_id: v.id("worlds"),
+    location_slug: v.string(),
+    option_label: v.string(),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_id, location_slug, option_label },
+  ): Promise<void> => {
+    // Re-check: might already be prefetched by the time this runs.
+    const info = await ctx.runQuery(internal.expansion.prefetchContext, {
+      session_token,
+      world_id,
+      location_slug,
+    });
+    if (!info.flag_on) return;
+    const existing = await ctx.runQuery(internal.expansion.findPrefetchedDraft, {
+      branch_id: info.branch_id,
+      parent_entity_id: info.parent_entity_id,
+      option_label,
+    });
+    if (existing) return;
+
+    // Build the same prompt expandFromFreeText would, using the option
+    // label as the free-text input hint.
+    const ctxData = await ctx.runQuery(internal.expansion.loadExpansionContext, {
+      session_token,
+      world_id,
+      location_slug,
+    });
+    const assembled = await ctx.runQuery(internal.narrative.buildPrompt, {
+      world_id,
+      purpose: "expansion",
+      location_entity_id: ctxData.parentEntityId,
+    });
+    const expansionInstructions = buildExpansionInstructions();
+    const userPrompt = buildUserPrompt(ctxData.parent, option_label, ctxData.characterName);
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      temperature: 1.0,
+      system: [
+        ...assembled.system,
+        { type: "text", text: expansionInstructions },
+      ],
+      messages: [{ role: "user", content: userPrompt }],
+    });
+
+    const text = response.content
+      .filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text)
+      .join("")
+      .trim();
+
+    const parsed = parseLocationOrNarrate(text, location_slug, ctxData.authorPseudonym);
+    if (parsed.kind === "narrate") return; // nothing to pre-warm
+
+    await ctx.runMutation(internal.expansion.insertExpandedLocation, {
+      session_token,
+      world_id,
+      parent_location_slug: location_slug,
+      location: parsed.location,
+      mode: "prefetch",
+      prefetched_from_option_label: option_label,
+    });
+  },
+});
+
+// Helper — read authored payload of an entity. Inlined since expansion.ts
+// doesn't already import the one from locations.ts.
+async function readAuthoredPayload<T>(ctx: any, entity: any): Promise<T> {
+  const v = await ctx.db
+    .query("artifact_versions")
+    .withIndex("by_artifact_version", (q: any) =>
+      q.eq("artifact_entity_id", entity._id).eq("version", entity.current_version),
+    )
+    .first();
+  if (!v) throw new Error(`no version for entity ${entity._id}`);
+  return readJSONBlob<T>(ctx, v.blob_hash);
+}
 
 // -----------------------------------------------------------------------
 // Prompts + parsing

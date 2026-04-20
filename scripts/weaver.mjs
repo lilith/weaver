@@ -81,7 +81,7 @@ function saveConfig(cfg) {
 }
 
 const argv = process.argv.slice(2);
-const flags = { json: false, help: false, world: null, url: null, full: false, limit: null, type: null };
+const flags = { json: false, help: false, world: null, url: null, full: false, limit: null, type: null, as: null };
 const positional = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -92,6 +92,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--url") flags.url = argv[++i];
   else if (a === "--limit") flags.limit = parseInt(argv[++i], 10);
   else if (a === "--type") flags.type = argv[++i];
+  else if (a === "--as") flags.as = argv[++i];
   else positional.push(a);
 }
 
@@ -101,7 +102,33 @@ if (positional.length === 0 || flags.help && positional.length === 0) {
 }
 
 const [cmd, ...rest] = positional;
-const cfg = loadConfig();
+let cfg = loadConfig();
+
+// Ephemeral --as <email> sudo: impersonate via devSignInAs for this one
+// invocation; do NOT touch the on-disk config. For owner-gated ops
+// against worlds we don't own.
+async function maybeImpersonate() {
+  if (!flags.as) return;
+  const url = flags.url ?? cfg.convex_url ?? process.env.PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL;
+  if (!url) err("PUBLIC_CONVEX_URL missing — required for --as", 2);
+  const client = new ConvexHttpClient(url);
+  const { session_token, user_id } = await client.action(ref("_dev.devSignInAs"), {
+    email: flags.as,
+  });
+  cfg = {
+    ...cfg,
+    session_token,
+    user_id,
+    email: flags.as,
+    convex_url: url,
+    // Drop stale world context — caller must re-select if needed.
+    world_slug: null,
+    world_id: null,
+    world_name: null,
+    mode: null,
+  };
+}
+await maybeImpersonate();
 
 // ---------------------------------------------------------------
 // Output helpers
@@ -215,6 +242,8 @@ async function dispatch() {
       return cmdFix(rest);
     case "flag":
       return cmdFlag(rest);
+    case "prefetch":
+      return cmdPrefetch(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -989,6 +1018,39 @@ async function cmdFlag([sub, ...a]) {
     }
   }
   err("usage: weaver flag [list|resolve|set|unset] ...", 2);
+}
+
+// ---------------------------------------------------------------
+// Commands: prefetch
+
+async function cmdPrefetch([sub]) {
+  needSession();
+  if (cfg.mode !== "author")
+    err("observer mode: prefetch is author-only (it triggers Opus calls)", 2);
+  const client = getClient();
+  const world_slug = currentWorld();
+  const info = await client.query(ref("cli.whereAmI"), {
+    session_token: cfg.session_token,
+    world_slug,
+  });
+  const loc_slug = info.character?.current_location_slug;
+  if (!loc_slug) err("character has no current location", 1);
+  const r = await client.action(ref("expansion.ensurePrefetched"), {
+    session_token: cfg.session_token,
+    world_id: cfg.world_id,
+    location_slug: loc_slug,
+  });
+  out(
+    r,
+    (o) =>
+      `flag=${o.flag ? "on" : "off"}\n` +
+      o.options
+        .map(
+          (x) =>
+            `  [${x.option_index}] ${x.option_label.padEnd(36)} ${x.status}${x.prefetched_slug ? ` (→ ${x.prefetched_slug})` : ""}`,
+        )
+        .join("\n"),
+  );
 }
 
 // ---------------------------------------------------------------
