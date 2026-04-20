@@ -137,3 +137,12 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Weaver
+files.zip
+.wrangler/
+playwright-report/
+test-results/
+.convex/
+/tmp/
+
