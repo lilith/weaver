@@ -97,6 +97,7 @@ export const getBySlugForMe = query({
       slug: world.slug,
       content_rating: world.content_rating,
       current_branch_id: world.current_branch_id,
+      active_era: world.active_era ?? 1,
       role: member.role,
     };
   },
@@ -742,6 +743,190 @@ export const applyBibleEdit = mutation({
     return { version: nextV };
   },
 });
+
+// --------------------------------------------------------------------
+// Eras v1 (spec 25). Minimal scope: worlds.active_era counter +
+// advanceEra mutation that writes a Chronicle row via Opus. Per-era
+// authoring files (entity.era-2.md), entity visibility gating, and
+// personal_era tracking deferred to v2.
+
+const CHRONICLE_MODEL = "claude-opus-4-7";
+
+/** Move the world from active_era N → N+1. Writes a Chronicle row
+ *  describing the transition. Owner-only. Idempotent-safe: calling
+ *  twice advances twice. */
+export const advanceEra = action({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    hint: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { session_token, world_slug, hint },
+  ): Promise<{ from_era: number; to_era: number; chronicle_id: Id<"chronicles"> }> => {
+    const info = await ctx.runQuery(internal.worlds.loadEraContext, {
+      session_token,
+      world_slug,
+    });
+    if (!info) throw new Error("world not found or forbidden");
+    const fromEra = info.active_era;
+    const toEra = fromEra + 1;
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await anthropic.messages.create({
+      model: CHRONICLE_MODEL,
+      max_tokens: 800,
+      temperature: 0.9,
+      system: [{ type: "text", text: CHRONICLE_SYSTEM_PROMPT }],
+      messages: [
+        {
+          role: "user",
+          content: `<world_bible>\n${JSON.stringify(info.bible, null, 2)}\n</world_bible>\n\n<transition>\nfrom era: ${fromEra}\nto era: ${toEra}\n${hint ? `hint: ${hint}` : ""}\n</transition>\n\nWrite the chronicle for this transition.`,
+        },
+      ],
+    });
+    const text = response.content
+      .filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join("")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "");
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e: any) {
+      throw new Error(`chronicle JSON parse failed: ${e?.message ?? e}`);
+    }
+    if (!parsed?.title || !parsed?.body)
+      throw new Error("chronicle missing title/body");
+
+    const chronicle_id: Id<"chronicles"> = await ctx.runMutation(
+      internal.worlds.writeEraTransition,
+      {
+        world_slug,
+        from_era: fromEra,
+        to_era: toEra,
+        title: String(parsed.title),
+        body: String(parsed.body),
+      },
+    );
+    return { from_era: fromEra, to_era: toEra, chronicle_id };
+  },
+});
+
+export const loadEraContext = internalQuery({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q: any) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    const { user_id } = await resolveMember(ctx as any, session_token, world._id);
+    if (world.owner_user_id !== user_id) return null;
+    if (!world.current_branch_id) return null;
+    const bibleEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q: any) =>
+        q
+          .eq("branch_id", world.current_branch_id!)
+          .eq("type", "bible")
+          .eq("slug", "bible"),
+      )
+      .first();
+    let bible: any = null;
+    if (bibleEntity) {
+      const v = await ctx.db
+        .query("artifact_versions")
+        .withIndex("by_artifact_version", (q: any) =>
+          q
+            .eq("artifact_entity_id", bibleEntity._id)
+            .eq("version", bibleEntity.current_version),
+        )
+        .first();
+      if (v) bible = await readJSONBlob<any>(ctx as any, v.blob_hash);
+    }
+    return {
+      active_era: world.active_era ?? 1,
+      bible: bible ?? {},
+      world_id: world._id,
+    };
+  },
+});
+
+export const writeEraTransition = internalMutation({
+  args: {
+    world_slug: v.string(),
+    from_era: v.number(),
+    to_era: v.number(),
+    title: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, { world_slug, from_era, to_era, title, body }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q: any) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world ${world_slug} vanished`);
+    const chronicle_id = await ctx.db.insert("chronicles", {
+      world_id: world._id,
+      from_era,
+      to_era,
+      title,
+      body,
+      created_at: Date.now(),
+    });
+    await ctx.db.patch(world._id, { active_era: to_era });
+    return chronicle_id;
+  },
+});
+
+export const listChronicles = query({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) return null;
+    await resolveMember(ctx, session_token, world._id);
+    const rows = await ctx.db
+      .query("chronicles")
+      .withIndex("by_world_era", (q) => q.eq("world_id", world._id))
+      .collect();
+    rows.sort((a: any, b: any) => a.to_era - b.to_era);
+    return {
+      active_era: world.active_era ?? 1,
+      chronicles: rows.map((r: any) => ({
+        id: r._id,
+        from_era: r.from_era,
+        to_era: r.to_era,
+        title: r.title,
+        body: r.body,
+        created_at: r.created_at,
+      })),
+    };
+  },
+});
+
+const CHRONICLE_SYSTEM_PROMPT = `You are the world's chronicler. A family has decided to advance their Weaver world's active era. Write the short transition piece that marks the boundary between era N and era N+1.
+
+Respond with strict JSON only:
+
+{
+  "title": "<short evocative title, 3-7 words>",
+  "body": "<2-4 paragraphs. First paragraph: what ended. Middle paragraphs: what changed / what now exists that didn't. Last paragraph: a hook — one detail that sets up era N+1.>"
+}
+
+Rules:
+- Stay in the world bible's tone and voice exactly.
+- Respect taboos and established facts.
+- Don't invent new named characters unless the bible already contains their seed (nicknames, role-indicators like "the carpenter").
+- Don't resolve existing mysteries unless the feedback hint asks you to.
+- The chronicle should feel like a chapter break, not a reset.
+- No markdown, no code fences, just JSON.`;
 
 const BIBLE_EDIT_SYSTEM_PROMPT = `You are assisting a family who has given you feedback about their Weaver world bible. Propose a minimal edit to the bible that addresses the feedback while preserving their voice, taboos, and established facts.
 

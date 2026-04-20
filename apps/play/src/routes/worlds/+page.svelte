@@ -21,10 +21,10 @@
 	{#if data.worlds.length > 0}
 		<ul class="space-y-3">
 			{#each data.worlds as world (world._id)}
-				<li>
+				<li class="group relative">
 					<a
 						href="/play/{world.slug}"
-						class="story-card group flex items-center justify-between px-5 py-4 no-underline"
+						class="story-card flex items-center justify-between px-5 py-4 no-underline"
 					>
 						<div>
 							<div class="font-display text-xl text-mist-100">{world.name}</div>
@@ -41,6 +41,15 @@
 							↝
 						</span>
 					</a>
+					{#if world.role === 'owner'}
+						<a
+							href="/admin/{world.slug}"
+							class="absolute top-2 right-14 rounded border border-mist-800/50 bg-velvet-900/70 px-2 py-1 font-hand text-xs text-candle-300 opacity-0 transition group-hover:opacity-100 hover:border-candle-400"
+							title="admin this world"
+						>
+							admin
+						</a>
+					{/if}
 				</li>
 			{/each}
 		</ul>

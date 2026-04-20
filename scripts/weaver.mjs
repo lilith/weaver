@@ -1894,6 +1894,41 @@ async function cmdBiome([sub, ...a]) {
           : `biome/${biome_slug} already had a palette (v${o.version})`,
     );
   }
+  if (sub === "list" || !sub) {
+    const biomes = await client.query(ref("cli.listEntities"), {
+      session_token: cfg.session_token,
+      world_slug: currentWorld(),
+      type: "biome",
+    });
+    const details = [];
+    for (const b of biomes) {
+      const e = await client.query(ref("cli.getEntity"), {
+        session_token: cfg.session_token,
+        world_slug: currentWorld(),
+        type: "biome",
+        slug: b.slug,
+      });
+      const p = e?.payload ?? {};
+      details.push({
+        slug: b.slug,
+        name: p.name ?? "(no name)",
+        has_rules: Boolean(p.rules),
+        time_dilation: p.rules?.time_dilation ?? 1,
+        has_palette: Boolean(p.palette?.overrides),
+        spawn_buckets: p.rules?.spawn_tables
+          ? Object.keys(p.rules.spawn_tables).length
+          : 0,
+      });
+    }
+    return out(details, (rs) =>
+      rs
+        .map(
+          (r) =>
+            `${r.slug.padEnd(28)} dil=${String(r.time_dilation).padStart(3)}  ${r.has_rules ? "rules" : "     "}  ${r.has_palette ? "palette" : "       "}  spawn_buckets=${r.spawn_buckets}  ${r.name}`,
+        )
+        .join("\n"),
+    );
+  }
   if (sub === "auto-palette-all") {
     if (cfg.mode !== "author" && !flags.as)
       err("observer mode: auto-palette-all is owner-only", 2);

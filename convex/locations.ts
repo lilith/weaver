@@ -428,6 +428,47 @@ export const applyOption = mutation({
           if (typeof rules.time_dilation === "number" && rules.time_dilation > 0) {
             dilation = rules.time_dilation;
           }
+
+          // spawn_tables — pick from the noise bucket matching
+          // this.sewer-entry.noise_level (if tracked) or default
+          // to low_noise. Roll a seeded dice against spawn_chance;
+          // if it hits, emit a `say` with the picked slug. Real
+          // combat spawn happens when combat module is wired into
+          // hooks (next pass); this is the atmospheric tier.
+          if (rules.spawn_tables && typeof rules.spawn_tables === "object") {
+            const noise =
+              (state.this as any)?.[effectiveBiomeSlug]?.noise_level ?? "low";
+            const bucket =
+              (rules.spawn_tables as any)[`${noise}_noise`] ??
+              (rules.spawn_tables as any).low_noise ??
+              [];
+            if (Array.isArray(bucket) && bucket.length > 0) {
+              const nextTurn2 = ((branchRow?.state as any)?.turn ?? 0) + 1;
+              const spawnSeed = `spawn|${branch_id}|${nextTurn2}`;
+              let h2 = 1779033703 ^ spawnSeed.length;
+              for (let i = 0; i < spawnSeed.length; i++) {
+                h2 = Math.imul(h2 ^ spawnSeed.charCodeAt(i), 3432918353);
+                h2 = (h2 << 13) | (h2 >>> 19);
+              }
+              let rA = h2 >>> 0;
+              const srng = () => {
+                rA |= 0;
+                rA = (rA + 0x6d2b79f5) | 0;
+                let t = Math.imul(rA ^ (rA >>> 15), 1 | rA);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+              };
+              const chance = Number(
+                (rules as any).spawn_chance_per_turn ?? 0.1,
+              );
+              if (srng() < chance) {
+                const pick = bucket[Math.floor(srng() * bucket.length)];
+                if (pick && pick !== "none") {
+                  exec.says.push(`(a ${pick} passes nearby)`);
+                }
+              }
+            }
+          }
         }
       }
     }
