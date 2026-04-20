@@ -62,7 +62,22 @@ export type EffectExecCtx = {
     flows: boolean;
     world_clock: boolean;
   };
+  // Recursion depth counter. Incremented each time applyEffects enters
+  // (crack_orb / use_item fire nested on_crack / on_use chains). Capped
+  // to prevent authored loops like orb-A whose on_absorb crack_orbs
+  // orb-B whose on_crack crack_orbs orb-A.
+  depth?: number;
+  // Runtime_bug accumulator. applyOption folds this into logBugs along
+  // with sanitize fixes.
+  bugs?: Array<{
+    code: string;
+    severity: "info" | "warn" | "error";
+    message: string;
+    context?: Record<string, unknown>;
+  }>;
 };
+
+const EFFECT_MAX_DEPTH = 32;
 
 /** Apply a list of effects in order. Mutates execCtx in place. */
 export async function applyEffects(
@@ -71,8 +86,26 @@ export async function applyEffects(
   exec: EffectExecCtx,
 ): Promise<void> {
   if (!effects || effects.length === 0) return;
-  for (const eff of effects) {
-    await applyOneEffect(ctx, eff, exec);
+  exec.depth ??= 0;
+  if (exec.depth >= EFFECT_MAX_DEPTH) {
+    (exec.bugs ??= []).push({
+      code: "effect.depth_exceeded",
+      severity: "error",
+      message: `effect chain depth > ${EFFECT_MAX_DEPTH}; aborted`,
+      context: {
+        location_slug: exec.location_slug,
+        at_kinds: effects.map((e) => (e as any).kind),
+      },
+    });
+    return;
+  }
+  exec.depth++;
+  try {
+    for (const eff of effects) {
+      await applyOneEffect(ctx, eff, exec);
+    }
+  } finally {
+    exec.depth--;
   }
 }
 
@@ -189,6 +222,45 @@ async function applyOneEffect(
       // Wave-2 biome_rules. No-op until wired.
       if (!exec.flags.biome_rules) return;
       return;
+    case "spawn_combat": {
+      // Resolve the NPC's combat_profile and schedule a combat flow
+      // on the next applyOption turn. Requires the flows flag.
+      if (!exec.flags.flows) return;
+      if (!eff.npc_slug || typeof eff.npc_slug !== "string") return;
+      const npc = await resolveEntityBySlug(ctx, exec.branch_id, eff.npc_slug, "npc");
+      if (!npc) {
+        (exec.bugs ??= []).push({
+          code: "effect.spawn_combat.npc_missing",
+          severity: "warn",
+          message: `spawn_combat: npc "${eff.npc_slug}" not found`,
+        });
+        return;
+      }
+      let payload: Record<string, any> = {};
+      try {
+        payload = await readAuthoredPayload<Record<string, any>>(ctx, npc);
+      } catch {}
+      const profile = (payload.combat_profile ?? {}) as Record<string, any>;
+      // Defaults are cozy-safe — a 3 hp / 1 atk pushover if the NPC
+      // wasn't authored with a profile. Overrides win over profile.
+      const initial_state = {
+        enemy_slug: eff.npc_slug,
+        enemy_name: payload.name ?? eff.npc_slug,
+        enemy_hp: Number(profile.hp ?? 3),
+        enemy_max_hp: Number(profile.hp ?? 3),
+        enemy_attack: Number(profile.attack ?? 1),
+        escape_dc: Number(profile.escape_dc ?? 6),
+        player_weapon_attack: Number(
+          (payload.combat_profile as any)?.player_weapon_attack ?? 3,
+        ),
+        ...((eff.overrides as Record<string, unknown>) ?? {}),
+      };
+      exec.pending.push({
+        kind: "flow_start",
+        payload: { module: "combat", initial_state },
+      });
+      return;
+    }
     default: {
       const _exhaustive: never = eff;
       return;

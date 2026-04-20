@@ -7,7 +7,7 @@ import { v } from "convex/values";
 import { readJSONBlob, writeJSONBlob } from "./blobs.js";
 import { resolveMember } from "./sessions.js";
 import { recordJourneyTransition } from "./journeys.js";
-import { advanceWorldTime, evalCondition } from "@weaver/engine/clock";
+import { advanceWorldTime, evalCondition, type ExprBug } from "@weaver/engine/clock";
 import type { Effect } from "@weaver/engine/effects";
 import {
   applyEffects,
@@ -242,6 +242,7 @@ export const applyOption = mutation({
     // Re-check the option's condition server-side against current state.
     const branchRow = await ctx.db.get(branch_id);
     const worldState = (branchRow?.state ?? {}) as Record<string, unknown>;
+    const runtimeBugs: ExprBug[] = [];
     if ((option as any).condition) {
       const scope = {
         world: worldState,
@@ -250,7 +251,26 @@ export const applyOption = mutation({
           ((character.state as any)?.this?.[payload.slug] as Record<string, unknown>) ?? {},
         location: {},
       };
-      if (!evalCondition((option as any).condition as string, scope)) {
+      if (!evalCondition((option as any).condition as string, scope, undefined, runtimeBugs)) {
+        // Parse error on the condition: log the bug + refuse softly
+        // (don't throw, so the logBugs insert survives Convex's
+        // transactional rollback). Well-formed-but-false conditions
+        // still throw — that's the "option legitimately unavailable"
+        // signal callers expect.
+        if (runtimeBugs.length > 0) {
+          await logBugs(ctx, runtimeBugs, {
+            world_id,
+            branch_id,
+            character_id: character._id,
+          });
+          return {
+            says: ["(authoring error on this option — logged to runtime_bugs)"],
+            new_location_slug: null,
+            needs_expansion: null,
+            closed_journey_id: null,
+            prefetched_hit: false,
+          };
+        }
         throw new Error("this option is not available right now");
       }
     }
@@ -273,6 +293,8 @@ export const applyOption = mutation({
       extra_minutes: 0,
       pending: [],
       flags,
+      depth: 0,
+      bugs: runtimeBugs,
     };
     // Also flush any pending_says from prior async narrate effects. These
     // were stamped onto character.state.pending_says by effects.runNarrate.
@@ -464,7 +486,47 @@ export const applyOption = mutation({
               if (srng() < chance) {
                 const pick = bucket[Math.floor(srng() * bucket.length)];
                 if (pick && pick !== "none") {
-                  exec.says.push(`(a ${pick} passes nearby)`);
+                  // If the picked slug resolves to an NPC with a
+                  // combat_profile, flag it as a hostile nearby so
+                  // authored "Square up to the X" options light up.
+                  // Otherwise fall back to atmospheric flavor.
+                  let isHostile = false;
+                  const npcEntity = await ctx.db
+                    .query("entities")
+                    .withIndex("by_branch_type_slug", (q: any) =>
+                      q.eq("branch_id", branch_id).eq("type", "npc").eq("slug", pick),
+                    )
+                    .first();
+                  if (npcEntity) {
+                    try {
+                      const npcPayload = await readAuthoredPayload<any>(
+                        ctx,
+                        npcEntity,
+                      );
+                      if (
+                        npcPayload?.combat_profile &&
+                        typeof npcPayload.combat_profile === "object"
+                      ) {
+                        isHostile = true;
+                        // Flag the hostile on the current location's
+                        // this-scope. Authored options gate with
+                        // `condition: this.hostile_nearby`. Leaving
+                        // the location clears the flag (new this scope).
+                        const thisKey = newLocationEntity?.slug ?? payload.slug;
+                        state.this ??= {};
+                        (state.this as any)[thisKey] ??= {};
+                        (state.this as any)[thisKey].hostile_nearby = pick;
+                        exec.says.push(
+                          `(${npcPayload.name ?? pick} appears and looks... confrontational)`,
+                        );
+                      }
+                    } catch {
+                      /* unreadable npc payload — fall through */
+                    }
+                  }
+                  if (!isHostile) {
+                    exec.says.push(`(a ${pick} passes nearby)`);
+                  }
                 }
               }
             }
@@ -501,18 +563,59 @@ export const applyOption = mutation({
       }
     }
 
-    // Persist the character after all effects (option + biome hooks)
-    // have mutated exec.state / exec.thisScope. Runtime-sanitize first
-    // so any invariant violation gets healed + logged rather than
-    // persisting corrupted state.
+    // Sanitize the character state before we compute clock + newday so
+    // both mutations can fold into a single character patch below.
     const { state: sanitized, fixes } = sanitizeCharacterState(state);
-    if (fixes.length > 0) {
-      await logBugs(ctx, fixes, {
+    // Fold sanitize fixes + expression/effect-runtime bugs into the
+    // same rate-limited logBugs call.
+    const allBugs = [...fixes, ...runtimeBugs];
+    if (allBugs.length > 0) {
+      await logBugs(ctx, allBugs, {
         world_id,
         branch_id,
         character_id: character._id,
       });
     }
+
+    // Compute the new clock (if the world has a clock at all) so we
+    // can apply the newday hook into the same character patch.
+    let nextClock: any = null;
+    let newDays = 0;
+    if (branchRow?.state?.time) {
+      const prev = branchRow.state.time as any;
+      nextClock = advanceWorldTime(prev, 1, dilation);
+      if (exec.extra_minutes > 0) {
+        const tmp = { ...nextClock, tick_minutes: 1 };
+        nextClock = advanceWorldTime(tmp, exec.extra_minutes, 1);
+        nextClock.tick_minutes = prev.tick_minutes;
+      }
+      newDays = (nextClock.day_counter ?? 0) - (prev.day_counter ?? 0);
+    }
+
+    // New-day hook — day_counter rolled forward. Clear ephemeral
+    // spawn flags across every this-scope so spawn_tables don't
+    // persist overnight at locations the player never revisited;
+    // emit a dawn say. Keep minimal — any deeper "new-day cycle"
+    // (Opus morning chronicle, NPC memory decay, authored
+    // on_newday effects) can land in a follow-up.
+    if (newDays > 0) {
+      const thisMap = (sanitized.this as any) ?? {};
+      for (const key of Object.keys(thisMap)) {
+        const scope = thisMap[key];
+        if (scope && typeof scope === "object" && scope.hostile_nearby !== undefined) {
+          delete scope.hostile_nearby;
+        }
+      }
+      const dawnSay =
+        newDays === 1
+          ? `(dawn rolls in — day ${nextClock.day_counter})`
+          : `(${newDays} days pass — day ${nextClock.day_counter})`;
+      sanitized.pending_says = [
+        ...((sanitized.pending_says as string[]) ?? []),
+        dawnSay,
+      ];
+    }
+
     await ctx.db.patch(character._id, {
       state: sanitized,
       current_location_id:
@@ -520,21 +623,12 @@ export const applyOption = mutation({
       updated_at: Date.now(),
     });
 
-    // Advance the world clock one tick per option taken, plus any
-    // extra minutes from advance_time effects. Biome time_dilation
-    // composes via `dilation` resolved above.
-    if (branchRow?.state?.time) {
-      let next = advanceWorldTime(branchRow.state.time as any, 1, dilation);
-      if (exec.extra_minutes > 0) {
-        const tmp = { ...next, tick_minutes: 1 };
-        next = advanceWorldTime(tmp, exec.extra_minutes, 1);
-        next.tick_minutes = (branchRow.state.time as any).tick_minutes;
-      }
+    if (nextClock) {
       await ctx.db.patch(branch_id, {
         state: {
-          ...branchRow.state,
-          time: next,
-          turn: ((branchRow.state as any)?.turn ?? 0) + 1,
+          ...branchRow!.state,
+          time: nextClock,
+          turn: ((branchRow!.state as any)?.turn ?? 0) + 1,
         },
       });
     }

@@ -405,9 +405,38 @@ Background agent surveyed `rhai / rune / evalexpr / koto / steel` via lib.rs; cl
 
 ### Deferred (low priority, follow-up)
 
-- **Runtime_bugs logging** for expression parse errors. Currently soft-fail returns undefined silently. Research agent's rec #5. Nice-to-have diagnostic.
-- **Fuel / depth limit** on `parseTernary` / `extendMemberChain` (~6 lines). Research agent's rec #6. Not critical since all expression sources are owner-authored.
 - **`weaver memory show <slug>`** CLI. One of the Quiet Vale agent's asks.
 - **`give_random_item`** effect / `slug: { pick: [...] }`. Both agents asked; the fishing-pond 4-stage workaround holds.
-- **`spawn_combat { npc_slug }`** effect that resolves `combat_profile` from the NPC entity. Both agents asked; hardcoded `initial_state` works but is verbose.
 - **Migration pass** for the ~91 Argus `item_id` entries. Runtime now accepts either, but canonicalising the blobs would let the validator catch drift in future content.
+
+---
+
+## 2026-04-20 — technical pass 2: auto-fixing bug surface + gameloop foundations
+
+**Worked on:** code path, both worlds.
+**Duration:** ~90 minutes.
+**Scope:** runtime_bugs integration for expression errors, recursion guards, combat spawn integration, new-day hook.
+
+### Shipped
+
+1. **Expression errors log to `runtime_bugs`.** `evalExpression` / `evalCondition` accept an optional `bugs: ExprBug[]` out-array; tokenize + parse failures push rows with the expression text + pos. applyOption collects them and folds into the rate-limited `logBugs` call. When a broken condition refuses an option, the bug is logged via a soft-refuse branch (return, don't throw) so the `ctx.db.insert` survives Convex's transactional rollback. `weaver bugs` surfaces them per world — auto-triage-ready.
+2. **Recursive-loop prevention.**
+   - Expression parser: depth counter in `parseTernary`, capped at `EXPR_MAX_DEPTH = 64`. Throws → caught by outer try/catch → logs `expr.parse_failed` bug.
+   - Effect chain: `depth` field on `EffectExecCtx`, capped at `EFFECT_MAX_DEPTH = 32`. Authored loop (orb-A on_absorb crack_orbs orb-B whose on_crack crack_orbs orb-A) now aborts after 32 nested applyEffects calls and logs `effect.depth_exceeded`.
+3. **`spawn_combat { npc_slug, overrides? }` effect.** Resolves the NPC entity, reads its `combat_profile` block, schedules a combat flow via `flow_start` with `{ enemy_slug, enemy_name, enemy_hp, enemy_attack, escape_dc, player_weapon_attack }` pre-populated. Authors gain a one-liner combat trigger: `{ kind: spawn_combat, npc_slug: "tumblefeed" }`. Missing NPC or missing profile → `effect.spawn_combat.npc_missing` bug + graceful no-op. The hardcoded-`initial_state` pattern the creative agents used still works; `spawn_combat` is the new ergonomic path.
+4. **Biome spawn_tables tier-2 integration.** When a rolled spawn slug resolves to an NPC with a `combat_profile`, the runtime sets `this[<loc>].hostile_nearby = <slug>` on the current location and emits a louder say ("X appears and looks... confrontational"). Authored options can gate with `condition: this.hostile_nearby` and follow up with `spawn_combat`. Non-combat spawns keep the atmospheric `(a X passes nearby)` flavor.
+5. **New-day hook on day-counter rollover.** In applyOption, any `newDays > 0` between prev clock and next clock clears `hostile_nearby` across every this-scope (so a hostile flagged at dusk doesn't persist through overnight) and appends a dawn-say to pending_says (`(dawn rolls in — day N)`). Fires inline with the same character patch; single write.
+
+### Tests
+
+- `scripts/gameplay-sweep.mjs` — added blocks for spawn_combat + runtime-bug logging + newday. **48 passed** with `--long`, 38 passed short.
+- `scripts/template-tests.mjs` — 19 passed (unchanged, regression-safe).
+- `svelte-check` — 0 errors.
+
+### Deferred
+
+- **Fuel limit on the effect scheduler loop** (separate from effect-chain depth). Tight — not yet needed since spawn_combat is the only newly-authored recursion-risk site.
+- **NPC memory decay** on new-day. Spec 24 hints at it; not wired.
+- **Opus morning chronicle** on new-day (per-world flag). Cost-sensitive; deferred.
+- **Authored `on_newday` hook** on biome/bible. Not in spec 21 yet.
+- **Template renderer bug-bag** — render-path expression errors (in `{{#if expr}}`) don't currently bubble bugs back to applyOption since template rendering happens in the page loader on the client side. The `#if` expression still fail-soft returns falsy; just no diagnostic.

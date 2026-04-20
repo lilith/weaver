@@ -48,7 +48,8 @@ export type Effect =
   | { kind: "emit"; event_type: string; payload?: unknown }
   | { kind: "flow_start"; module: string; initial_state?: unknown }
   | { kind: "flow_send"; flow_id?: string; input: unknown }
-  | { kind: "spawn_from_biome"; bucket: string; chance: number };
+  | { kind: "spawn_from_biome"; bucket: string; chance: number }
+  | { kind: "spawn_combat"; npc_slug: string; overrides?: Record<string, unknown> };
 
 export type EffectKind = Effect["kind"];
 
@@ -70,6 +71,7 @@ export const ALL_EFFECT_KINDS: EffectKind[] = [
   "flow_start",
   "flow_send",
   "spawn_from_biome",
+  "spawn_combat",
 ];
 
 /** Quick type guard — does this object look like an Effect? */

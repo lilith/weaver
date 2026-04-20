@@ -591,6 +591,217 @@ async function main() {
     "give_item with legacy item_id field populated inventory under that slug",
   );
 
+  // --- spawn_combat effect + expression-bug logging + depth guard ---
+  log("\n[spawn_combat + runtime bug logging]");
+  // Author a tiny hostile NPC with a combat_profile.
+  await client.mutation(api.cli.pushEntityPayload, {
+    session_token,
+    world_slug,
+    type: "npc",
+    slug: "sweep-scrapper",
+    payload_json: JSON.stringify({
+      name: "Sweep Scrapper",
+      description: "A sweep-test hostile.",
+      combat_profile: { hp: 2, attack: 1, escape_dc: 5 },
+    }),
+    reason: "sweep: spawn_combat npc",
+  });
+  await client.mutation(api.cli.fixEntityField, {
+    session_token,
+    world_slug,
+    type: "location",
+    slug: "village-square",
+    field: "options",
+    new_value_json: JSON.stringify([
+      {
+        label: "Trigger spawn_combat on scrapper",
+        effect: [{ kind: "spawn_combat", npc_slug: "sweep-scrapper" }],
+      },
+      {
+        label: "Option with broken condition",
+        condition: "@@@not a real expression@@@",
+        effect: [{ kind: "say", text: "should never fire" }],
+      },
+      { label: "Back out", target: "mara-cottage" },
+    ]),
+    reason: "sweep: spawn_combat + broken-cond",
+  });
+  await client.mutation(api.cli.teleportCharacter, {
+    session_token,
+    world_slug,
+    loc_slug: "village-square",
+  });
+  const spawnFlowsBefore = await client.query(api.flows.listMyFlows, {
+    session_token,
+    world_slug,
+  });
+  await client.mutation(api.locations.applyOption, {
+    session_token,
+    world_id,
+    location_slug: "village-square",
+    option_index: 0,
+  });
+  let spawnFlowsAfter = spawnFlowsBefore;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    spawnFlowsAfter = await client.query(api.flows.listMyFlows, {
+      session_token,
+      world_slug,
+    });
+    if (spawnFlowsAfter.length > spawnFlowsBefore.length) break;
+  }
+  const spawnedCombat = spawnFlowsAfter.find(
+    (f) =>
+      f.module_name === "combat" &&
+      !spawnFlowsBefore.some((p) => p.id === f.id),
+  );
+  assert(spawnedCombat, "spawn_combat effect opened a combat flow row");
+  assert(
+    spawnedCombat.state?.enemy_slug === "sweep-scrapper" &&
+      spawnedCombat.state?.enemy_hp === 2 &&
+      spawnedCombat.state?.enemy_attack === 1,
+    "spawn_combat resolved NPC combat_profile (hp=2, atk=1)",
+  );
+
+  // Pick the broken-condition option. applyOption will soft-refuse
+  // (since the parse error triggers the logBugs + early-return branch,
+  // not the throw branch).
+  const brokeRes = await client.mutation(api.locations.applyOption, {
+    session_token,
+    world_id,
+    location_slug: "village-square",
+    option_index: 1,
+  });
+  assert(
+    (brokeRes.says ?? []).some((s) => s.includes("authoring error")),
+    "broken-condition option soft-refused with authoring-error say",
+  );
+  // Scheduler-dispatched bug write lands shortly after the throw;
+  // poll briefly rather than sleep a fixed duration.
+  let spawnBugs = [];
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 150));
+    spawnBugs = await client.query(api.diagnostics.listBugs, {
+      session_token,
+      world_slug,
+      since_ms: Date.now() - 30_000,
+    });
+    if (
+      spawnBugs.some(
+        (b) =>
+          b.code === "expr.tokenize_failed" || b.code === "expr.parse_failed",
+      )
+    )
+      break;
+  }
+  const hasExprBug = spawnBugs.some(
+    (b) => b.code === "expr.tokenize_failed" || b.code === "expr.parse_failed",
+  );
+  if (!hasExprBug) {
+    log(`  [debug] bugs returned: ${JSON.stringify(spawnBugs.map((b) => b.code))}`);
+  }
+  assert(hasExprBug, "broken condition logged to runtime_bugs");
+
+  // --- New-day hook: hostile_nearby clears + dawn say appended ---
+  log("\n[newday hook on day rollover]");
+  // Seed a stale hostile-nearby flag on village-square.
+  await client.mutation(api.cli.setCharacterState, {
+    session_token,
+    world_slug,
+    path: "this.village-square.hostile_nearby",
+    value_json: '"sweep-scrapper"',
+  });
+  // Cache pending-says baseline (the soft-refuse added one line).
+  const preNewdayMe = await client.query(api.cli.whereAmI, {
+    session_token,
+    world_slug,
+  });
+  const preDaySays = (preNewdayMe.character.state.pending_says ?? []).length;
+  const preDay = (
+    await client.query(api.cli.dumpLocation, {
+      session_token,
+      world_slug,
+      loc_slug: "village-square",
+    })
+  ).world_state.time.day_counter;
+  // Jump the clock to just before midnight so the next applyOption
+  // tick will roll the day counter (the newday hook is keyed off the
+  // prev→next day_counter delta inside applyOption, not off
+  // fastForwardClock — fastForwardClock doesn't fire gameplay hooks).
+  const currentDow = (
+    await client.query(api.cli.dumpLocation, {
+      session_token,
+      world_slug,
+      loc_slug: "village-square",
+    })
+  ).world_state.time.day_of_week;
+  await client.mutation(api.cli.fastForwardClock, {
+    session_token,
+    world_slug,
+    to_day_of_week: currentDow,
+    to_hhmm: "23:55",
+  });
+  // Re-set the stale hostile flag in case fastForwardClock touched state.
+  await client.mutation(api.cli.setCharacterState, {
+    session_token,
+    world_slug,
+    path: "this.village-square.hostile_nearby",
+    value_json: '"sweep-scrapper"',
+  });
+  // Bump tick_minutes large enough that +1 tick rolls past midnight.
+  // Each option-pick advances 1 tick; sandbox default is 1 min, so
+  // advance_time in the effect list pushes us across.
+  await client.mutation(api.cli.fixEntityField, {
+    session_token,
+    world_slug,
+    type: "location",
+    slug: "village-square",
+    field: "options",
+    new_value_json: JSON.stringify([
+      {
+        label: "Push clock past midnight",
+        effect: [{ kind: "advance_time", delta_minutes: 20 }],
+      },
+      { label: "Back out", target: "mara-cottage" },
+    ]),
+    reason: "sweep: newday advance_time",
+  });
+  await client.mutation(api.cli.teleportCharacter, {
+    session_token,
+    world_slug,
+    loc_slug: "village-square",
+  });
+  await client.mutation(api.locations.applyOption, {
+    session_token,
+    world_id,
+    location_slug: "village-square",
+    option_index: 0, // push clock past midnight
+  });
+  const postNewdayMe = await client.query(api.cli.whereAmI, {
+    session_token,
+    world_slug,
+  });
+  const postHostile =
+    postNewdayMe.character.state.this?.["village-square"]?.hostile_nearby;
+  assert(
+    postHostile === undefined,
+    "newday cleared hostile_nearby on this-scope",
+  );
+  const postSays = postNewdayMe.character.state.pending_says ?? [];
+  assert(
+    postSays.some((s) => s.includes("dawn") || s.includes("days pass")),
+    "newday appended a dawn say to pending_says",
+  );
+  const postDump = await client.query(api.cli.dumpLocation, {
+    session_token,
+    world_slug,
+    loc_slug: "village-square",
+  });
+  assert(
+    postDump.world_state.time.day_counter > preDay,
+    `day_counter advanced (was ${preDay}, now ${postDump.world_state.time.day_counter})`,
+  );
+
   // --- Summary ---
   log("\n== Summary ==");
   log(`${pass} passed, ${fail} failed`);

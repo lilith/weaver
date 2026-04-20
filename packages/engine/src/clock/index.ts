@@ -101,21 +101,42 @@ export function advanceWorldTime(
  *  RNG is injectable. Callers should pass a seeded rng (by
  *  branch+turn+entity) so re-renders are deterministic; omitting
  *  falls back to Math.random. */
+/** Bug row pushed by evalExpression when it rejects an expression. Same
+ *  shape as `RuntimeBug` from @weaver/engine/diagnostics; kept inline
+ *  to avoid a cross-module dep. Callers may pass a bugs-out array to
+ *  evalExpression / evalCondition and forward the rows to logBugs. */
+export type ExprBug = {
+	code: string;
+	severity: "info" | "warn" | "error";
+	message: string;
+	context?: Record<string, unknown>;
+};
+
+const EXPR_MAX_DEPTH = 64;
+
 export function evalExpression(
 	expr: string,
 	scope: Record<string, unknown>,
 	rng?: () => number,
+	bugs?: ExprBug[],
 ): unknown {
 	if (!expr || !expr.trim()) return undefined;
 	let tokens: Token[];
 	try {
 		tokens = tokenize(expr);
-	} catch {
+	} catch (e: any) {
 		// Malformed expression (unknown char, unterminated string, etc.).
 		// Fail soft — condition evaluates falsy; dumpLocation stays alive.
+		bugs?.push({
+			code: "expr.tokenize_failed",
+			severity: "warn",
+			message: `expression tokenize failed: ${e?.message ?? e}`,
+			context: { expr },
+		});
 		return undefined;
 	}
 	let pos = 0;
+	let depth = 0;
 	const rnd = rng ?? Math.random;
 
 	function peek() {
@@ -130,15 +151,21 @@ export function evalExpression(
 	}
 
 	function parseTernary(): unknown {
-		const cond = parseOr();
-		if (peek()?.kind === "?") {
-			consume("?");
-			const a = parseTernary();
-			consume(":");
-			const b = parseTernary();
-			return truthy(cond) ? a : b;
+		if (++depth > EXPR_MAX_DEPTH)
+			throw new Error(`expression depth > ${EXPR_MAX_DEPTH}`);
+		try {
+			const cond = parseOr();
+			if (peek()?.kind === "?") {
+				consume("?");
+				const a = parseTernary();
+				consume(":");
+				const b = parseTernary();
+				return truthy(cond) ? a : b;
+			}
+			return cond;
+		} finally {
+			depth--;
 		}
-		return cond;
 	}
 	function parseOr(): unknown {
 		let left = parseAnd();
@@ -314,7 +341,13 @@ export function evalExpression(
 	}
 	try {
 		return parseTernary();
-	} catch {
+	} catch (e: any) {
+		bugs?.push({
+			code: "expr.parse_failed",
+			severity: "warn",
+			message: `expression parse failed: ${e?.message ?? e}`,
+			context: { expr, pos },
+		});
 		return undefined;
 	}
 }
@@ -324,9 +357,10 @@ export function evalCondition(
 	expr: string,
 	scope: Record<string, unknown>,
 	rng?: () => number,
+	bugs?: ExprBug[],
 ): boolean {
 	if (!expr || !expr.trim()) return true;
-	const v = evalExpression(expr, scope, rng);
+	const v = evalExpression(expr, scope, rng, bugs);
 	return truthy(v);
 }
 
