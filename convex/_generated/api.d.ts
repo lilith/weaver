@@ -14,6 +14,7 @@ import type * as art_curation from "../art_curation.js";
 import type * as auth from "../auth.js";
 import type * as blobs from "../blobs.js";
 import type * as characters from "../characters.js";
+import type * as classify from "../classify.js";
 import type * as cli from "../cli.js";
 import type * as crons from "../crons.js";
 import type * as diagnostics from "../diagnostics.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   blobs: typeof blobs;
   characters: typeof characters;
+  classify: typeof classify;
   cli: typeof cli;
   crons: typeof crons;
   diagnostics: typeof diagnostics;
