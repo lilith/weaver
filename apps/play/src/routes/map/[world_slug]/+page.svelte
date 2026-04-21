@@ -125,6 +125,13 @@
 	});
 
 	const sessionToken = $derived(((data as any).session_token ?? (page.data as any).session_token) ?? '');
+	// Optional ?layout=force|radial-tree|biome-cluster URL param so the
+	// mode picker produces shareable/bookmarkable URLs.
+	const initialMode = $derived.by(() => {
+		const q = page.url.searchParams.get('layout');
+		if (q === 'radial-tree' || q === 'biome-cluster' || q === 'force') return q;
+		return 'force' as const;
+	});
 </script>
 
 <svelte:head>
@@ -154,7 +161,12 @@
 	</header>
 
 	{#if data.graph_enabled}
-		<GraphMap bundle={(data as any).bundle} worldSlug={data.world_slug} {sessionToken} />
+		<GraphMap
+			bundle={(data as any).bundle}
+			worldSlug={data.world_slug}
+			{sessionToken}
+			{initialMode}
+		/>
 	{:else}
 		<div class="map-wrap">
 			<svg

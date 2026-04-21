@@ -446,6 +446,251 @@ export function layoutSubgraph(
   return result;
 }
 
+// --- Alternate layouts ----------------------------------------------
+// Two modes that sidestep cardinal-cone bias entirely — useful for
+// worlds whose authored graph is sparse on cardinals (Quiet Vale uses
+// option.target labels) or has contradictory cardinals (The Office).
+//
+// Both take the same signature as layoutSubgraph and return the same
+// LayoutResult shape.
+
+export type LayoutMode = "force" | "radial-tree" | "biome-cluster";
+
+/** BFS out from the highest-degree spatial node. Concentric rings;
+ *  children distributed across each ring's angular slice. Disconnected
+ *  components get their own tree, tiled horizontally.
+ *
+ *  Good for: sparse graphs, trees, worlds where hierarchy > cardinals. */
+export function layoutRadialTree(
+  rawNodes: GraphNode[],
+  rawEdges: GraphEdge[],
+  opts: LayoutOptions,
+): LayoutResult {
+  const result: LayoutResult = new Map();
+  if (rawNodes.length === 0) return result;
+
+  const classes = rawNodes.map((n) => classifyNode(n));
+  const idx = new Map<string, number>();
+  rawNodes.forEach((n, i) => idx.set(n.slug, i));
+
+  // Undirected adjacency — respect only non-action nodes in the tree.
+  const adj: Record<number, number[]> = {};
+  for (const e of rawEdges) {
+    const i = idx.get(e.from), j = idx.get(e.to);
+    if (i == null || j == null) continue;
+    if (classes[i] === "action" || classes[j] === "action") continue;
+    (adj[i] ??= []).push(j);
+    (adj[j] ??= []).push(i);
+  }
+
+  const treeIdx = rawNodes
+    .map((_, i) => i)
+    .filter((i) => classes[i] !== "action");
+
+  const visited = new Set<number>();
+  const components: Array<Array<{ node: number; depth: number; parent: number | null }>> = [];
+
+  while (visited.size < treeIdx.length) {
+    // Pick the highest-degree unvisited node.
+    let root = -1, rootDeg = -1;
+    for (const i of treeIdx) {
+      if (visited.has(i)) continue;
+      const d = adj[i]?.length ?? 0;
+      if (d > rootDeg || (d === rootDeg && rawNodes[i].slug < rawNodes[root]?.slug)) {
+        root = i; rootDeg = d;
+      }
+    }
+    if (root < 0) break;
+    const comp: Array<{ node: number; depth: number; parent: number | null }> = [];
+    const queue: Array<{ node: number; depth: number; parent: number | null }> = [
+      { node: root, depth: 0, parent: null },
+    ];
+    visited.add(root);
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      comp.push(cur);
+      for (const n of adj[cur.node] ?? []) {
+        if (visited.has(n)) continue;
+        visited.add(n);
+        queue.push({ node: n, depth: cur.depth + 1, parent: cur.node });
+      }
+    }
+    components.push(comp);
+  }
+
+  // Each component gets its own centre + radius budget. Tile horizontally
+  // along a central band.
+  const ringStep = 120;
+  const componentWidths = components.map((c) => {
+    const maxDepth = c.reduce((m, x) => Math.max(m, x.depth), 0);
+    return (maxDepth + 1) * ringStep * 2 + ringStep;
+  });
+  const totalWidth = componentWidths.reduce((a, b) => a + b, 0);
+  const scale = Math.min(1, (opts.width * 0.9) / Math.max(1, totalWidth));
+  const bandY = opts.height / 2;
+  let cursorX = (opts.width - totalWidth * scale) / 2;
+
+  const pos: Vec[] = rawNodes.map(() => ({ x: opts.width / 2, y: opts.height / 2 }));
+
+  for (const [ci, comp] of components.entries()) {
+    const cw = componentWidths[ci] * scale;
+    const cx = cursorX + cw / 2;
+    const cy = bandY;
+    cursorX += cw;
+
+    // Group by depth.
+    const byDepth: Record<number, number[]> = {};
+    for (const { node, depth } of comp) (byDepth[depth] ??= []).push(node);
+
+    for (const [depthStr, members] of Object.entries(byDepth)) {
+      const depth = Number(depthStr);
+      if (depth === 0) {
+        pos[members[0]] = { x: cx, y: cy };
+        continue;
+      }
+      const r = depth * ringStep * scale;
+      const step = (Math.PI * 2) / members.length;
+      // Deterministic angle offset per depth so consecutive rings
+      // don't land directly above each other (looks cleaner).
+      const rootSlug = rawNodes[comp[0].node].slug;
+      const base = (hashString(`${rootSlug}:${depth}`) % 360) * (Math.PI / 180);
+      members.sort((a, b) => (rawNodes[a].slug < rawNodes[b].slug ? -1 : 1));
+      for (let i = 0; i < members.length; i++) {
+        const ang = base + i * step;
+        pos[members[i]] = {
+          x: cx + Math.cos(ang) * r,
+          y: cy + Math.sin(ang) * r,
+        };
+      }
+    }
+  }
+
+  // Action chips orbit their parent (same as force sim).
+  rawNodes.forEach((n, i) => {
+    if (classes[i] !== "action") return;
+    const parentSlug = Object.values(n.neighbors ?? {})[0];
+    const pi = parentSlug ? idx.get(parentSlug) : undefined;
+    if (pi == null) return;
+    const seedAng = (hashString(n.slug) % 360) * (Math.PI / 180);
+    pos[i] = {
+      x: pos[pi].x + Math.cos(seedAng) * 60,
+      y: pos[pi].y + Math.sin(seedAng) * 60,
+    };
+  });
+
+  rawNodes.forEach((n, i) => {
+    result.set(n.slug, { x: pos[i].x, y: pos[i].y, class: classes[i] });
+  });
+  return result;
+}
+
+/** Group nodes by biome (falling through to subgraph), arrange each
+ *  group as a circle, and place the group centres around a larger
+ *  outer ring. Edges between groups cross the inner empty space;
+ *  edges inside a group are short.
+ *
+ *  Good for: worlds with strong biome-level separation, where users
+ *  want to see "which area is which" before "what connects to what". */
+export function layoutBiomeCluster(
+  rawNodes: GraphNode[],
+  rawEdges: GraphEdge[],
+  opts: LayoutOptions,
+): LayoutResult {
+  // Silence lint — edges aren't needed for this layout; topology
+  // implicit via grouping.
+  void rawEdges;
+
+  const result: LayoutResult = new Map();
+  if (rawNodes.length === 0) return result;
+  const classes = rawNodes.map((n) => classifyNode(n));
+  const idx = new Map<string, number>();
+  rawNodes.forEach((n, i) => idx.set(n.slug, i));
+
+  // Group by biome OR subgraph (biome preferred).
+  const groups = new Map<string, number[]>();
+  for (let i = 0; i < rawNodes.length; i++) {
+    if (classes[i] === "action") continue;
+    const n = rawNodes[i];
+    const key = n.biome ?? n.subgraph ?? "unassigned";
+    const arr = groups.get(key) ?? [];
+    arr.push(i);
+    groups.set(key, arr);
+  }
+
+  // Sort group keys for determinism.
+  const keys = [...groups.keys()].sort();
+  const outerRadius = Math.min(opts.width, opts.height) * 0.38;
+  const cx = opts.width / 2;
+  const cy = opts.height / 2;
+  const pos: Vec[] = rawNodes.map(() => ({ x: cx, y: cy }));
+
+  // Place group centres around the outer ring.
+  for (let g = 0; g < keys.length; g++) {
+    const key = keys[g];
+    const members = groups.get(key)!;
+    // Members sort — stable inner order.
+    members.sort((a, b) => (rawNodes[a].slug < rawNodes[b].slug ? -1 : 1));
+
+    const outerAng = (g / Math.max(1, keys.length)) * Math.PI * 2 - Math.PI / 2;
+    const gx = cx + Math.cos(outerAng) * outerRadius;
+    const gy = cy + Math.sin(outerAng) * outerRadius;
+
+    // Each group's inner radius scales with its size.
+    const innerRadius = Math.max(40, Math.sqrt(members.length) * 28);
+    if (members.length === 1) {
+      pos[members[0]] = { x: gx, y: gy };
+      continue;
+    }
+    const step = (Math.PI * 2) / members.length;
+    const base = (hashString(key) % 360) * (Math.PI / 180);
+    for (let i = 0; i < members.length; i++) {
+      const ang = base + i * step;
+      pos[members[i]] = {
+        x: gx + Math.cos(ang) * innerRadius,
+        y: gy + Math.sin(ang) * innerRadius,
+      };
+    }
+  }
+
+  // Action chips orbit parent.
+  rawNodes.forEach((n, i) => {
+    if (classes[i] !== "action") return;
+    const parentSlug = Object.values(n.neighbors ?? {})[0];
+    const pi = parentSlug ? idx.get(parentSlug) : undefined;
+    if (pi == null) return;
+    const seedAng = (hashString(n.slug) % 360) * (Math.PI / 180);
+    pos[i] = {
+      x: pos[pi].x + Math.cos(seedAng) * 60,
+      y: pos[pi].y + Math.sin(seedAng) * 60,
+    };
+  });
+
+  rawNodes.forEach((n, i) => {
+    result.set(n.slug, { x: pos[i].x, y: pos[i].y, class: classes[i] });
+  });
+  return result;
+}
+
+/** Dispatcher. `mode = "force"` (default) uses the cardinal-bias force
+ *  sim; "radial-tree" and "biome-cluster" use the alternate layouts
+ *  above. Same signature + return type regardless. */
+export function layout(
+  rawNodes: GraphNode[],
+  rawEdges: GraphEdge[],
+  opts: LayoutOptions & { mode?: LayoutMode },
+): LayoutResult {
+  switch (opts.mode) {
+    case "radial-tree":
+      return layoutRadialTree(rawNodes, rawEdges, opts);
+    case "biome-cluster":
+      return layoutBiomeCluster(rawNodes, rawEdges, opts);
+    case "force":
+    case undefined:
+    default:
+      return layoutSubgraph(rawNodes, rawEdges, opts);
+  }
+}
+
 // --- Seed helper -----------------------------------------------------
 // Caller passes branch_id (or any string) and we hash → numeric seed.
 export function seedFromKey(key: string): number {

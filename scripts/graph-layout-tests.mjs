@@ -17,6 +17,9 @@ import {
   classifyNode,
   directionToVector,
   layoutSubgraph,
+  layoutRadialTree,
+  layoutBiomeCluster,
+  layout,
   CARDINAL_LABELS,
   VERB_LABELS,
 } from "../packages/engine/src/graph-layout/index.ts";
@@ -389,6 +392,90 @@ console.log("\n[layoutSubgraph — min-distance floor]");
   const a = r.get("a"), b = r.get("b");
   const d = Math.hypot(a.x - b.x, a.y - b.y);
   checkTrue(`adversarially co-pinned nodes spread to d=${d.toFixed(1)} (>= 50)`, d >= 50);
+}
+
+// --- layoutRadialTree ---------------------------------------------
+
+console.log("\n[layoutRadialTree]");
+{
+  // A root with 3 children — children should land at depth=1 ring.
+  const nodes = [
+    { slug: "root", biome: null, subgraph: null, draft: false, tags: [], neighbors: { walk: "a", walk2: "b", walk3: "c" } },
+    { slug: "a", biome: null, subgraph: null, draft: false, tags: [], neighbors: { back: "root" } },
+    { slug: "b", biome: null, subgraph: null, draft: false, tags: [], neighbors: { back: "root" } },
+    { slug: "c", biome: null, subgraph: null, draft: false, tags: [], neighbors: { back: "root" } },
+  ];
+  const edges = [
+    { from: "root", to: "a", direction: "walk", traffic: 0 },
+    { from: "root", to: "b", direction: "walk2", traffic: 0 },
+    { from: "root", to: "c", direction: "walk3", traffic: 0 },
+  ];
+  const r = layoutRadialTree(nodes, edges, { width: 800, height: 600 });
+  const root = r.get("root");
+  // Children radius ≈ 120 * scale; they should all be roughly equidistant from root.
+  const dists = ["a", "b", "c"].map((s) => {
+    const p = r.get(s);
+    return Math.hypot(p.x - root.x, p.y - root.y);
+  });
+  checkTrue(`children equidistant from root  (${dists.map(d => d.toFixed(1)).join(", ")})`,
+    Math.abs(dists[0] - dists[1]) < 1 && Math.abs(dists[1] - dists[2]) < 1);
+  checkTrue("root-to-child distance > 0", dists[0] > 10);
+
+  // Disconnected components tile horizontally.
+  const nodes2 = [
+    { slug: "x1", biome: null, subgraph: null, draft: false, tags: [], neighbors: {} },
+    { slug: "x2", biome: null, subgraph: null, draft: false, tags: [], neighbors: {} },
+    { slug: "x3", biome: null, subgraph: null, draft: false, tags: [], neighbors: {} },
+  ];
+  const r2 = layoutRadialTree(nodes2, [], { width: 900, height: 300 });
+  const xs = [...r2.values()].map(p => p.x).sort((a, b) => a - b);
+  checkTrue(`disconnected nodes spread horizontally (xs=${xs.map(x => x.toFixed(0)).join(",")})`,
+    xs[2] - xs[0] > 50);
+}
+
+// --- layoutBiomeCluster -------------------------------------------
+
+console.log("\n[layoutBiomeCluster]");
+{
+  const nodes = [
+    { slug: "v1", biome: "village", subgraph: null, draft: false, tags: [], neighbors: {} },
+    { slug: "v2", biome: "village", subgraph: null, draft: false, tags: [], neighbors: {} },
+    { slug: "v3", biome: "village", subgraph: null, draft: false, tags: [], neighbors: {} },
+    { slug: "f1", biome: "forest",  subgraph: null, draft: false, tags: [], neighbors: {} },
+    { slug: "f2", biome: "forest",  subgraph: null, draft: false, tags: [], neighbors: {} },
+  ];
+  const r = layoutBiomeCluster(nodes, [], { width: 1000, height: 1000 });
+  // Compute group centroids and check they're separated by > 200px.
+  const vPs = ["v1", "v2", "v3"].map((s) => r.get(s));
+  const fPs = ["f1", "f2"].map((s) => r.get(s));
+  const vc = { x: vPs.reduce((a, p) => a + p.x, 0) / vPs.length, y: vPs.reduce((a, p) => a + p.y, 0) / vPs.length };
+  const fc = { x: fPs.reduce((a, p) => a + p.x, 0) / fPs.length, y: fPs.reduce((a, p) => a + p.y, 0) / fPs.length };
+  const sep = Math.hypot(vc.x - fc.x, vc.y - fc.y);
+  checkTrue(`biome centroids separated by ${sep.toFixed(1)} (>150)`, sep > 150);
+  // Within-village nodes closer to each other than to forest.
+  const vMax = Math.max(...vPs.map(p => Math.hypot(p.x - vc.x, p.y - vc.y)));
+  checkTrue(`village nodes clustered tighter than biome separation (${vMax.toFixed(1)} < ${sep.toFixed(1)})`,
+    vMax < sep);
+}
+
+// --- layout() dispatcher ------------------------------------------
+
+console.log("\n[layout() dispatcher]");
+{
+  const nodes = [
+    { slug: "a", biome: "x", subgraph: null, draft: false, tags: [], neighbors: { n: "b" } },
+    { slug: "b", biome: "x", subgraph: null, draft: false, tags: [], neighbors: { s: "a" } },
+  ];
+  const edges = [{ from: "a", to: "b", direction: "n", traffic: 0 }];
+  const o = { width: 800, height: 600, seed: 1 };
+  const rForce = layout(nodes, edges, { ...o, mode: "force" });
+  const rRadial = layout(nodes, edges, { ...o, mode: "radial-tree" });
+  const rCluster = layout(nodes, edges, { ...o, mode: "biome-cluster" });
+  const rDefault = layout(nodes, edges, o);
+  checkTrue("force mode returns positions", rForce.size === 2);
+  checkTrue("radial-tree mode returns positions", rRadial.size === 2);
+  checkTrue("biome-cluster mode returns positions", rCluster.size === 2);
+  checkTrue("default mode matches force", rDefault.get("a").x === rForce.get("a").x);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -17,10 +17,11 @@
 	import { useConvexClient } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import {
-		layoutSubgraph,
+		layout,
 		seedFromKey,
 		type GraphNode,
-		type GraphEdge
+		type GraphEdge,
+		type LayoutMode
 	} from '@weaver/engine/graph-layout';
 
 	type BundleNode = {
@@ -46,7 +47,8 @@
 		worldSlug,
 		sessionToken,
 		canvasWidth = 1200,
-		canvasHeight = 800
+		canvasHeight = 800,
+		initialMode = 'force'
 	} = $props<{
 		bundle: {
 			world: { id: string; slug: string; name: string; style_tag: string | null };
@@ -59,9 +61,17 @@
 		sessionToken: string;
 		canvasWidth?: number;
 		canvasHeight?: number;
+		initialMode?: LayoutMode;
 	}>();
 
 	const client = useConvexClient();
+
+	let mode = $state<LayoutMode>((() => initialMode as LayoutMode)());
+	const MODE_META: Array<{ id: LayoutMode; label: string; hint: string }> = [
+		{ id: 'force', label: 'Force', hint: 'cardinal-aware, default' },
+		{ id: 'radial-tree', label: 'Radial', hint: 'BFS from the biggest hub outward' },
+		{ id: 'biome-cluster', label: 'Clusters', hint: 'group by biome' }
+	];
 
 	// Convert bundle → layout inputs + run force sim. Deterministic seed
 	// from branch_id so all family members see the same pre-pin layout.
@@ -82,7 +92,8 @@
 			direction: e.direction,
 			traffic: e.traffic
 		}));
-		return layoutSubgraph(nodes, edges, {
+		return layout(nodes, edges, {
+			mode,
 			width: canvasWidth,
 			height: canvasHeight,
 			seed: seedFromKey(bundle.branch_id),
@@ -226,6 +237,22 @@
 	onwheel={onWheel}
 	role="presentation"
 >
+	<div class="graph-header">
+		<span class="font-hand text-xs text-mist-400">layout:</span>
+		{#each MODE_META as m (m.id)}
+			<button
+				type="button"
+				class="graph-mode-btn"
+				class:graph-mode-btn-active={mode === m.id}
+				aria-pressed={mode === m.id}
+				title={m.hint}
+				onpointerdown={(ev) => ev.stopPropagation()}
+				onclick={() => (mode = m.id)}
+			>
+				{m.label}
+			</button>
+		{/each}
+	</div>
 	<svg
 		viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
 		width={canvasWidth}
@@ -390,6 +417,38 @@
 		touch-action: none;
 		cursor: grab;
 		user-select: none;
+	}
+	.graph-header {
+		position: absolute;
+		top: 6px;
+		left: 8px;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		z-index: 20;
+		padding: 4px 8px;
+		background: rgba(12, 10, 24, 0.85);
+		border: 1px solid rgba(255, 210, 140, 0.2);
+		border-radius: 6px;
+	}
+	.graph-mode-btn {
+		padding: 3px 8px;
+		font-size: 11px;
+		color: rgba(245, 230, 200, 0.7);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 4px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.graph-mode-btn:hover {
+		color: rgba(245, 230, 200, 0.95);
+		background: rgba(255, 210, 140, 0.08);
+	}
+	.graph-mode-btn-active {
+		color: rgba(245, 230, 200, 1);
+		background: rgba(255, 210, 140, 0.18);
+		border-color: rgba(255, 210, 140, 0.45);
 	}
 	.graph-node {
 		cursor: pointer;
