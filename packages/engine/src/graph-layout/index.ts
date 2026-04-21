@@ -43,6 +43,10 @@ export type LayoutOptions = {
   edgeBaseLength?: number;
   chargeStrength?: number;
   seed?: number;
+  /** Minimum pairwise distance; nodes closer than this receive a
+   *  Hooke-style hard repulsion, not just inverse-square charge.
+   *  Prevents the local minima where two nodes end up at d=0. */
+  minPairDistance?: number;
 };
 
 export type LayoutResult = Map<string, { x: number; y: number; class: NodeClass }>;
@@ -151,11 +155,12 @@ export function layoutSubgraph(
   const iterations = opts.iterations ?? 120;
   const intraA = opts.intraSubgraphAttraction ?? 0.5;
   const interA = opts.interSubgraphAttraction ?? 0.08;
-  const coneStrength = opts.cardinalBiasStrength ?? 0.8;
+  const coneStrength = opts.cardinalBiasStrength ?? 2.5;
   const coneAngle = opts.coneAngleRad ?? Math.PI / 4;
   const pinPull = opts.pinPullStrength ?? 1.5;
   const edgeLen = opts.edgeBaseLength ?? 140;
   const charge = opts.chargeStrength ?? 7000;
+  const minPair = opts.minPairDistance ?? 70;
   const rand = mulberry32(opts.seed ?? 0x9e3779b9);
   const cx = opts.width / 2;
   const cy = opts.height / 2;
@@ -244,6 +249,29 @@ export function layoutSubgraph(
   // Build edge lookup from -> to keyed edges so we can track cone bias.
   const edgeList = rawEdges.filter((e) => idx.has(e.from) && idx.has(e.to));
 
+  // Bidirectional cardinal conflict resolution (spec 26 §Feasibility
+  // "45° cone preservation test"). When A has cardinal "north:B" AND B
+  // also has a cardinal pointing at A, both cones would fire at once
+  // and cancel each other. For each unordered pair we pick ONE cardinal
+  // edge to own the cone: if only one side has a cardinal, that one
+  // wins by default; if both do, the lower-slug source wins.
+  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const cardinalEdgesByPair = new Map<string, GraphEdge[]>();
+  for (const e of edgeList) {
+    if (!directionToVector(e.direction)) continue;
+    const k = pairKey(e.from, e.to);
+    const arr = cardinalEdgesByPair.get(k);
+    if (arr) arr.push(e);
+    else cardinalEdgesByPair.set(k, [e]);
+  }
+  const coneEdge = new WeakSet<GraphEdge>();
+  for (const arr of cardinalEdgesByPair.values()) {
+    // Prefer the edge whose source is lexicographically first; guarantees
+    // deterministic winner regardless of edge insertion order.
+    arr.sort((p, q) => (p.from < q.from ? -1 : p.from > q.from ? 1 : 0));
+    coneEdge.add(arr[0]);
+  }
+
   for (let iter = 0; iter < iterations; iter++) {
     const force: Vec[] = rawNodes.map(() => ({ x: 0, y: 0 }));
 
@@ -258,29 +286,58 @@ export function layoutSubgraph(
       if (n > 0) centroid[k] = { x: sx / n, y: sy / n };
     }
 
-    // 1) Charge repulsion (only between physics nodes).
+    // 1) Charge repulsion (only between physics nodes). Inverse-square
+    //    at long range; Hooke-style hard repulsion inside minPair so
+    //    adversarial co-location (same pin, random init at center, etc)
+    //    can't settle at d=0 in a local minimum. Also perturb along a
+    //    deterministic axis when d=0 exactly, so the force has a direction.
     for (let a = 0; a < physicsIdx.length; a++) {
       for (let b = a + 1; b < physicsIdx.length; b++) {
         const i = physicsIdx[a], j = physicsIdx[b];
-        const dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1) d2 = 1;
-        const inv = charge / d2;
-        const d = Math.sqrt(d2);
-        const fx = (dx / d) * inv, fy = (dy / d) * inv;
+        let dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
+        let d = Math.hypot(dx, dy);
+        if (d < 0.001) {
+          // Perfect overlap — nudge along a stable axis so repulsion
+          // has a direction. Sign derives from node ordering.
+          const nudgeAng = (hashString(rawNodes[i].slug + rawNodes[j].slug) % 360) * (Math.PI / 180);
+          dx = Math.cos(nudgeAng) * 0.5;
+          dy = Math.sin(nudgeAng) * 0.5;
+          d = 0.5;
+        }
+        let fx: number, fy: number;
+        if (d < minPair) {
+          // Hard Hooke spring pushing out to minPair — stiffness high
+          // enough to dominate other forces even in a single iteration.
+          const k = 0.6;
+          const excess = minPair - d;
+          const push = k * excess;
+          fx = (dx / d) * push;
+          fy = (dy / d) * push;
+        } else {
+          const inv = charge / (d * d);
+          fx = (dx / d) * inv;
+          fy = (dy / d) * inv;
+        }
         force[i].x -= fx; force[i].y -= fy;
         force[j].x += fx; force[j].y += fy;
       }
     }
 
-    // 2) Edge spring + cone bias.
+    // 2) Edge spring + cone bias. Two changes from the naive version:
+    //    a) Only the conflict-resolution winner fires cone bias (see
+    //       conePair setup above). The loser's edge still springs.
+    //    b) When outside the cone, the bias force is proportional to
+    //       the angular excess (no sin-softening, no 0.15 dampener).
+    //       That's strong enough to dominate the spring+charge tension
+    //       that produced the 137°-off drift in the real-world audit.
     for (const e of edgeList) {
       const i = idx.get(e.from)!, j = idx.get(e.to)!;
       if (classes[i] === "action" || classes[j] === "action") continue;
       const dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
       const d = Math.max(1, Math.hypot(dx, dy));
       const v = directionToVector(e.direction);
-      const rest = v ? edgeLen : edgeLen * 1.5;
+      const isConeOwner = v !== null && coneEdge.has(e);
+      const rest = isConeOwner ? edgeLen : edgeLen * 1.5;
       // Spring toward rest length.
       const springK = 0.05;
       const springF = (d - rest) * springK;
@@ -288,20 +345,34 @@ export function layoutSubgraph(
       force[i].x += ux * springF; force[i].y += uy * springF;
       force[j].x -= ux * springF; force[j].y -= uy * springF;
 
-      // Cone bias — rotate current edge toward v if outside cone.
-      if (v) {
+      // Cone bias. Two regimes:
+      //   - Outside the cone: strong corrective proportional to angular
+      //     excess, scaled by edge length (to produce roughly constant
+      //     angular acceleration regardless of edge length).
+      //   - Inside the cone: a gentle restorative toward the exact
+      //     target direction, ~10% as strong. Without this, the edge
+      //     can stall at cone-boundary + tiny-epsilon because the
+      //     outside-cone force approaches 0 at the boundary.
+      if (isConeOwner && v) {
         const cos = ux * v.dx + uy * v.dy;
         const clamped = Math.max(-1, Math.min(1, cos));
         const ang = Math.acos(clamped);
+        const cross = ux * v.dy - uy * v.dx;
+        const sign = cross > 0 ? 1 : -1;
+        const px = -uy * sign, py = ux * sign;
+        let mag: number;
         if (ang > coneAngle) {
-          const excess = ang - coneAngle;
-          // Perpendicular direction to rotate into the cone.
-          // Sign of the perpendicular is the sign of cross(u, v).
-          const cross = ux * v.dy - uy * v.dx;
-          const sign = cross > 0 ? 1 : -1;
-          // Perpendicular to u, pointing toward v side.
-          const px = -uy * sign, py = ux * sign;
-          const mag = coneStrength * Math.sin(excess) * d * 0.15;
+          mag = coneStrength * (ang - coneAngle + 0.1) * d * 0.12;
+        } else if (ang > 0.01) {
+          // Soft in-cone restorative. Strength scales with ang so at
+          // θ=0 there's no force (node is exactly on target); at the
+          // boundary it matches the outside force's baseline for
+          // continuity.
+          mag = coneStrength * ang * d * 0.012;
+        } else {
+          mag = 0;
+        }
+        if (mag !== 0) {
           force[i].x -= px * mag; force[i].y -= py * mag;
           force[j].x += px * mag; force[j].y += py * mag;
         }

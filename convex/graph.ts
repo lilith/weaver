@@ -167,10 +167,49 @@ export const loadGraphMap = query({
         if (rendering?.blob_hash) tile_url = publicTileUrl(rendering.blob_hash);
       }
 
+      // Navigation edges come from two authored sources:
+      //   - payload.neighbors: { "<direction>": "<slug>" } — cardinal-labelled
+      //     paths. Layout uses these for cone bias.
+      //   - payload.options[].target: "<slug>"           — verbatim option
+      //     labels. Not directional; layout treats them as soft springs
+      //     without cone bias. Vale uses these almost exclusively.
       const neighborsRaw = (payload?.neighbors ?? {}) as Record<string, string>;
       const neighbors: Record<string, string> = {};
       for (const [k, v0] of Object.entries(neighborsRaw)) {
         if (typeof v0 === "string") neighbors[normDir(k)] = v0;
+      }
+      // Fold in option.target as implicit neighbors, keyed by option
+      // label (not a cardinal). Classifier will treat the label as non-
+      // cardinal, which keeps the force sim happy without forcing a
+      // phantom direction. Dedup against an existing neighbors entry —
+      // neighbors wins when present.
+      const optionTargets = Array.isArray(payload?.options)
+        ? (payload.options as any[])
+        : [];
+      const knownTargets = new Set(Object.values(neighbors));
+      let optSeq = 0;
+      for (const opt of optionTargets) {
+        const target = typeof opt?.target === "string" ? opt.target : null;
+        if (!target) continue;
+        if (knownTargets.has(target)) continue;
+        // Build a label safe to use as a Convex object key: printable
+        // ASCII only, collapsed whitespace, dash-separated, truncated.
+        let label =
+          typeof opt?.label === "string" && opt.label
+            ? opt.label
+                .toLowerCase()
+                .replace(/[^\x20-\x7e]+/g, "") // drop non-ASCII (em-dash, fancy quotes, etc.)
+                .replace(/[^a-z0-9-]+/g, "-")
+                .replace(/-+/g, "-")
+                .replace(/^-|-$/g, "")
+                .slice(0, 40)
+            : "";
+        if (!label) label = `opt-${optSeq++}`;
+        // Avoid key collision with a cardinal neighbor OR a previous
+        // option target on the same node.
+        while (neighbors[label]) label = `${label}-${optSeq++}`;
+        neighbors[label] = target;
+        knownTargets.add(target);
       }
 
       // For action nodes expanded via an option, parent slug lets the UI

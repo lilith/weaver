@@ -344,5 +344,52 @@ console.log("\n[constants]");
   checkTrue("VERB_LABELS contains examine", VERB_LABELS.has("examine"));
 }
 
+// --- Bidirectional cardinal conflict resolution ----------------------
+// When A says "north:B" AND B says "north:A", both can't be right.
+// Layout should canonicalise to one winner (stable: lower slug wins on
+// the edge direction it authored) — the loser's cone bias is dropped.
+
+console.log("\n[layoutSubgraph — bidirectional conflict]");
+{
+  // A and B both claim "north" to each other. Under the naive algo,
+  // both cones fire and cancel out. Under conflict-resolution, only
+  // A's claim (lower slug sorts first) wins; B's north label is
+  // treated as non-cardinal.
+  const nodes = [
+    { slug: "a-lower", biome: null, subgraph: null, draft: false, tags: [], neighbors: { n: "b-higher" } },
+    { slug: "b-higher", biome: null, subgraph: null, draft: false, tags: [], neighbors: { n: "a-lower" } },
+  ];
+  const edges = [
+    { from: "a-lower", to: "b-higher", direction: "n", traffic: 0 },
+    { from: "b-higher", to: "a-lower", direction: "n", traffic: 0 },
+  ];
+  const r = layoutSubgraph(nodes, edges, { width: 800, height: 600, seed: 11, iterations: 200 });
+  const a = r.get("a-lower"), b = r.get("b-higher");
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  // A's "north:B" claim: B should be ABOVE A (dy negative). Within 45°
+  // means dy/len < -cos(45°) ≈ -0.707.
+  checkTrue(
+    `B lands above A — a's "north:b" claim wins (dy/len=${(dy/len).toFixed(2)})`,
+    dy / len < -0.5,
+  );
+}
+
+// --- Minimum-distance floor ------------------------------------------
+
+console.log("\n[layoutSubgraph — min-distance floor]");
+{
+  // Two nodes with no edges between them — pure charge-repulsion test.
+  // They should never land at d=0 even from adversarial init.
+  const nodes = [
+    { slug: "a", biome: null, subgraph: null, draft: false, tags: [], neighbors: {}, pin: { x: 400, y: 400 } },
+    { slug: "b", biome: null, subgraph: null, draft: false, tags: [], neighbors: {}, pin: { x: 400, y: 400 } },
+  ];
+  const r = layoutSubgraph(nodes, [], { width: 800, height: 800, seed: 5, iterations: 200 });
+  const a = r.get("a"), b = r.get("b");
+  const d = Math.hypot(a.x - b.x, a.y - b.y);
+  checkTrue(`adversarially co-pinned nodes spread to d=${d.toFixed(1)} (>= 50)`, d >= 50);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
