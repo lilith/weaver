@@ -478,5 +478,37 @@ console.log("\n[layout() dispatcher]");
   checkTrue("default mode matches force", rDefault.get("a").x === rForce.get("a").x);
 }
 
+// --- No-overlap guarantee across modes ----------------------------
+
+console.log("\n[all modes — no overlap on dense graphs]");
+{
+  // 40-node graph in 4 biomes (10 each). Mimics Vale's village cluster
+  // shape — the hard case for single-ring biome-cluster.
+  const nodes = [];
+  const edges = [];
+  const biomes = ["a", "b", "c", "d"];
+  for (const biome of biomes) {
+    for (let i = 0; i < 10; i++) {
+      const slug = `${biome}-${i}`;
+      nodes.push({
+        slug, biome, subgraph: null, draft: false, tags: [],
+        neighbors: i > 0 ? { back: `${biome}-${i - 1}` } : {},
+      });
+      if (i > 0) edges.push({ from: slug, to: `${biome}-${i - 1}`, direction: "back", traffic: 0 });
+    }
+  }
+  const modes = ["force", "radial-tree", "biome-cluster"];
+  const MIN = 100; // just under the 110 default floor
+  for (const mode of modes) {
+    const r = layout(nodes, edges, { width: 1200, height: 900, seed: 5, mode });
+    const plist = [...r.values()];
+    let minD = Infinity;
+    for (let i = 0; i < plist.length; i++)
+      for (let j = i + 1; j < plist.length; j++)
+        minD = Math.min(minD, Math.hypot(plist[i].x - plist[j].x, plist[i].y - plist[j].y));
+    checkTrue(`${mode}: min pair distance ${minD.toFixed(1)} >= ${MIN}`, minD >= MIN);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

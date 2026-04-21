@@ -113,12 +113,32 @@
 		scale = next;
 	}
 
-	let dragging: { slug: string | null; startX: number; startY: number } | null = null;
+	// Drag-vs-click disambiguation: total travel distance must exceed
+	// this threshold (screen pixels) before pointermove is treated as a
+	// drag. Below the threshold we swallow the movement, leaving the
+	// subsequent pointerup free to navigate.
+	const DRAG_THRESHOLD_PX = 5;
+
+	let dragging: {
+		slug: string | null;
+		startX: number;
+		startY: number;
+		prevX: number;
+		prevY: number;
+		moved: boolean;
+	} | null = null;
 	let panDrag: { startX: number; startY: number; panX: number; panY: number } | null = null;
 
 	function startNodeDrag(slug: string, ev: PointerEvent) {
 		ev.stopPropagation();
-		dragging = { slug, startX: ev.clientX, startY: ev.clientY };
+		dragging = {
+			slug,
+			startX: ev.clientX,
+			startY: ev.clientY,
+			prevX: ev.clientX,
+			prevY: ev.clientY,
+			moved: false
+		};
 		(ev.target as Element).setPointerCapture?.(ev.pointerId);
 	}
 	function startPanDrag(ev: PointerEvent) {
@@ -126,17 +146,28 @@
 	}
 	function onPointerMove(ev: PointerEvent) {
 		if (dragging) {
-			// Translate screen delta into SVG delta (divide by scale).
-			const dx = (ev.clientX - dragging.startX) / scale;
-			const dy = (ev.clientY - dragging.startY) / scale;
-			// Update overlayPins map (optimistic).
+			// Skip movement until we've crossed the drag threshold — that
+			// way a click with ±2px of mouse jitter still registers as a
+			// tap → goto instead of a zero-op pin-at-current-position.
+			const totalDx = ev.clientX - dragging.startX;
+			const totalDy = ev.clientY - dragging.startY;
+			if (!dragging.moved) {
+				if (Math.hypot(totalDx, totalDy) < DRAG_THRESHOLD_PX) {
+					dragging.prevX = ev.clientX;
+					dragging.prevY = ev.clientY;
+					return;
+				}
+				dragging.moved = true;
+			}
+			const dx = (ev.clientX - dragging.prevX) / scale;
+			const dy = (ev.clientY - dragging.prevY) / scale;
 			const p = overlayPins.get(dragging.slug!) ?? positions.get(dragging.slug!);
 			if (p) {
 				overlayPins.set(dragging.slug!, { x: p.x + dx, y: p.y + dy });
-				overlayPins = new Map(overlayPins); // trigger reactivity
+				overlayPins = new Map(overlayPins);
 			}
-			dragging.startX = ev.clientX;
-			dragging.startY = ev.clientY;
+			dragging.prevX = ev.clientX;
+			dragging.prevY = ev.clientY;
 			return;
 		}
 		if (panDrag) {
@@ -144,27 +175,31 @@
 			panY = panDrag.panY + (ev.clientY - panDrag.startY);
 		}
 	}
-	async function onPointerUp(ev: PointerEvent) {
+	async function onPointerUp(_ev: PointerEvent) {
 		if (dragging?.slug) {
-			// Persist the pin. If nothing moved (tap), treat as goto.
 			const slug = dragging.slug;
-			const pinned = overlayPins.get(slug);
+			const moved = dragging.moved;
 			dragging = null;
-			if (pinned) {
-				try {
-					await client.mutation(api.graph.pinNodePosition, {
-						session_token: sessionToken,
-						world_slug: worldSlug,
-						slug,
-						x: pinned.x,
-						y: pinned.y
-					});
-				} catch (err) {
-					// Revert overlay on failure.
-					overlayPins.delete(slug);
-					overlayPins = new Map(overlayPins);
-					console.warn('pinNodePosition failed', err);
+			if (moved) {
+				const pinned = overlayPins.get(slug);
+				if (pinned) {
+					try {
+						await client.mutation(api.graph.pinNodePosition, {
+							session_token: sessionToken,
+							world_slug: worldSlug,
+							slug,
+							x: pinned.x,
+							y: pinned.y
+						});
+					} catch (err) {
+						overlayPins.delete(slug);
+						overlayPins = new Map(overlayPins);
+						console.warn('pinNodePosition failed', err);
+					}
 				}
+			} else {
+				// No meaningful movement → treat as a tap.
+				goto(`/play/${worldSlug}/${slug}`);
 			}
 		}
 		panDrag = null;
@@ -183,12 +218,14 @@
 		};
 	}
 
-	// Tap → navigate. Guarded by short total travel distance so drags don't
-	// trigger navigation.
-	function onNodeClick(slug: string, ev: MouseEvent) {
-		if (overlayPins.has(slug)) return;
-		ev.stopPropagation();
-		goto(`/play/${worldSlug}/${slug}`);
+	// Tap → navigate handled by onPointerUp when drag-threshold wasn't met.
+	// Keyboard path needs its own: Enter/Space on a focused node goes to
+	// the play page directly.
+	function onNodeKeydown(slug: string, ev: KeyboardEvent) {
+		if (ev.key === 'Enter' || ev.key === ' ') {
+			ev.preventDefault();
+			goto(`/play/${worldSlug}/${slug}`);
+		}
 	}
 
 	async function releasePin(slug: string) {
@@ -301,11 +338,8 @@
 						role="button"
 						tabindex="0"
 						onpointerdown={(ev) => startNodeDrag(n.slug, ev)}
-						onclick={(ev) => onNodeClick(n.slug, ev)}
 						oncontextmenu={(ev) => openMenu(n.slug, ev)}
-						onkeydown={(ev) => {
-							if (ev.key === 'Enter' || ev.key === ' ') goto(`/play/${worldSlug}/${n.slug}`);
-						}}
+						onkeydown={(ev) => onNodeKeydown(n.slug, ev)}
 					>
 						{#if isAction}
 							<rect

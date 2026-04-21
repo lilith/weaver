@@ -160,7 +160,7 @@ export function layoutSubgraph(
   const pinPull = opts.pinPullStrength ?? 1.5;
   const edgeLen = opts.edgeBaseLength ?? 140;
   const charge = opts.chargeStrength ?? 7000;
-  const minPair = opts.minPairDistance ?? 70;
+  const minPair = opts.minPairDistance ?? 110;
   const rand = mulberry32(opts.seed ?? 0x9e3779b9);
   const cx = opts.width / 2;
   const cy = opts.height / 2;
@@ -440,10 +440,60 @@ export function layoutSubgraph(
     };
   });
 
+  // Final collision cleanup — the force sim usually settles on its own
+  // but adversarial inputs (heavily-cycled triangles, tight subgraph
+  // centroids) can leave nodes overlapping. This pass guarantees no
+  // two spatial/floating nodes end up within minPair of each other.
+  resolveCollisions(pos, physicsIdx, minPair, 16);
+
   rawNodes.forEach((n, i) => {
     result.set(n.slug, { x: pos[i].x, y: pos[i].y, class: classes[i] });
   });
   return result;
+}
+
+// --- Shared collision-resolution pass -------------------------------
+//
+// After any layout, walk pairs and push apart anything closer than
+// `minD`. Deterministic (stable node order), O(n² × iterations) but
+// iterations default to 8 so it's cheap even for 100 nodes.
+//
+// Applied by both the force sim (inside its iteration loop) and
+// alternate layouts (as a final clean-up step).
+function resolveCollisions(
+  pos: Vec[],
+  active: number[],
+  minD: number,
+  iterations: number,
+): void {
+  if (active.length < 2 || minD <= 0) return;
+  for (let it = 0; it < iterations; it++) {
+    let moved = false;
+    for (let a = 0; a < active.length; a++) {
+      for (let b = a + 1; b < active.length; b++) {
+        const i = active[a], j = active[b];
+        let dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
+        let d = Math.hypot(dx, dy);
+        if (d >= minD) continue;
+        if (d < 0.001) {
+          // Deterministic axis nudge so repulsion has direction.
+          const ang = ((i * 7919 + j * 104729) % 360) * (Math.PI / 180);
+          dx = Math.cos(ang) * 0.5;
+          dy = Math.sin(ang) * 0.5;
+          d = 0.5;
+        }
+        const needed = minD - d;
+        const ux = dx / d, uy = dy / d;
+        const shift = needed / 2;
+        pos[i].x -= ux * shift;
+        pos[i].y -= uy * shift;
+        pos[j].x += ux * shift;
+        pos[j].y += uy * shift;
+        moved = true;
+      }
+    }
+    if (!moved) return;
+  }
 }
 
 // --- Alternate layouts ----------------------------------------------
@@ -456,9 +506,10 @@ export function layoutSubgraph(
 
 export type LayoutMode = "force" | "radial-tree" | "biome-cluster";
 
-/** BFS out from the highest-degree spatial node. Concentric rings;
- *  children distributed across each ring's angular slice. Disconnected
- *  components get their own tree, tiled horizontally.
+/** BFS out from the highest-degree spatial node. Children get angular
+ *  slices proportional to their subtree size (prevents stacking when
+ *  one branch is much bigger than siblings). Disconnected components
+ *  tile horizontally across the canvas.
  *
  *  Good for: sparse graphs, trees, worlds where hierarchy > cardinals. */
 export function layoutRadialTree(
@@ -472,6 +523,7 @@ export function layoutRadialTree(
   const classes = rawNodes.map((n) => classifyNode(n));
   const idx = new Map<string, number>();
   rawNodes.forEach((n, i) => idx.set(n.slug, i));
+  const minPair = opts.minPairDistance ?? 110;
 
   // Undirected adjacency — respect only non-action nodes in the tree.
   const adj: Record<number, number[]> = {};
@@ -487,11 +539,12 @@ export function layoutRadialTree(
     .map((_, i) => i)
     .filter((i) => classes[i] !== "action");
 
+  // BFS per-component, building child lists for tree traversal.
+  type TreeNode = { node: number; children: TreeNode[]; depth: number; size: number };
   const visited = new Set<number>();
-  const components: Array<Array<{ node: number; depth: number; parent: number | null }>> = [];
+  const components: TreeNode[] = [];
 
   while (visited.size < treeIdx.length) {
-    // Pick the highest-degree unvisited node.
     let root = -1, rootDeg = -1;
     for (const i of treeIdx) {
       if (visited.has(i)) continue;
@@ -501,71 +554,96 @@ export function layoutRadialTree(
       }
     }
     if (root < 0) break;
-    const comp: Array<{ node: number; depth: number; parent: number | null }> = [];
-    const queue: Array<{ node: number; depth: number; parent: number | null }> = [
-      { node: root, depth: 0, parent: null },
-    ];
+
+    const rootTn: TreeNode = { node: root, children: [], depth: 0, size: 1 };
     visited.add(root);
+    const byId = new Map<number, TreeNode>([[root, rootTn]]);
+    const queue: TreeNode[] = [rootTn];
     while (queue.length > 0) {
       const cur = queue.shift()!;
-      comp.push(cur);
-      for (const n of adj[cur.node] ?? []) {
-        if (visited.has(n)) continue;
+      // Stable child ordering by slug for determinism.
+      const neighbors = [...(adj[cur.node] ?? [])]
+        .filter((n) => !visited.has(n))
+        .sort((a, b) => (rawNodes[a].slug < rawNodes[b].slug ? -1 : 1));
+      for (const n of neighbors) {
         visited.add(n);
-        queue.push({ node: n, depth: cur.depth + 1, parent: cur.node });
+        const child: TreeNode = {
+          node: n,
+          children: [],
+          depth: cur.depth + 1,
+          size: 1,
+        };
+        cur.children.push(child);
+        byId.set(n, child);
+        queue.push(child);
       }
     }
-    components.push(comp);
+    // Post-order: compute subtree sizes.
+    function sumSizes(tn: TreeNode): number {
+      let s = 1;
+      for (const c of tn.children) s += sumSizes(c);
+      tn.size = s;
+      return s;
+    }
+    sumSizes(rootTn);
+    components.push(rootTn);
   }
 
-  // Each component gets its own centre + radius budget. Tile horizontally
-  // along a central band.
-  const ringStep = 120;
+  // Layout each component in its own horizontal slot.
+  const ringStep = 140;
   const componentWidths = components.map((c) => {
-    const maxDepth = c.reduce((m, x) => Math.max(m, x.depth), 0);
+    let maxDepth = 0;
+    function walk(tn: TreeNode) {
+      if (tn.depth > maxDepth) maxDepth = tn.depth;
+      for (const ch of tn.children) walk(ch);
+    }
+    walk(c);
     return (maxDepth + 1) * ringStep * 2 + ringStep;
   });
   const totalWidth = componentWidths.reduce((a, b) => a + b, 0);
-  const scale = Math.min(1, (opts.width * 0.9) / Math.max(1, totalWidth));
+  const scale = Math.min(1, (opts.width * 0.95) / Math.max(1, totalWidth));
   const bandY = opts.height / 2;
   let cursorX = (opts.width - totalWidth * scale) / 2;
 
   const pos: Vec[] = rawNodes.map(() => ({ x: opts.width / 2, y: opts.height / 2 }));
+
+  // Place each tree by walking it once, assigning angular slices
+  // proportional to subtree size.
+  function placeTree(tn: TreeNode, cx: number, cy: number) {
+    // Root at centre.
+    pos[tn.node] = { x: cx, y: cy };
+    // Recurse: distribute children in a full 2π around the root;
+    // for sub-children, use the parent's angular slice [from,to].
+    function placeChildren(parent: TreeNode, from: number, to: number, depth: number) {
+      const total = parent.children.reduce((s, c) => s + c.size, 0);
+      if (total === 0) return;
+      let cursor = from;
+      const parentSize = parent.size;
+      void parentSize;
+      for (const child of parent.children) {
+        const span = ((child.size / total) * (to - from));
+        const mid = cursor + span / 2;
+        const r = depth * ringStep * scale;
+        pos[child.node] = {
+          x: cx + Math.cos(mid) * r,
+          y: cy + Math.sin(mid) * r,
+        };
+        placeChildren(child, cursor, cursor + span, depth + 1);
+        cursor += span;
+      }
+    }
+    placeChildren(tn, 0, Math.PI * 2, 1);
+  }
 
   for (const [ci, comp] of components.entries()) {
     const cw = componentWidths[ci] * scale;
     const cx = cursorX + cw / 2;
     const cy = bandY;
     cursorX += cw;
-
-    // Group by depth.
-    const byDepth: Record<number, number[]> = {};
-    for (const { node, depth } of comp) (byDepth[depth] ??= []).push(node);
-
-    for (const [depthStr, members] of Object.entries(byDepth)) {
-      const depth = Number(depthStr);
-      if (depth === 0) {
-        pos[members[0]] = { x: cx, y: cy };
-        continue;
-      }
-      const r = depth * ringStep * scale;
-      const step = (Math.PI * 2) / members.length;
-      // Deterministic angle offset per depth so consecutive rings
-      // don't land directly above each other (looks cleaner).
-      const rootSlug = rawNodes[comp[0].node].slug;
-      const base = (hashString(`${rootSlug}:${depth}`) % 360) * (Math.PI / 180);
-      members.sort((a, b) => (rawNodes[a].slug < rawNodes[b].slug ? -1 : 1));
-      for (let i = 0; i < members.length; i++) {
-        const ang = base + i * step;
-        pos[members[i]] = {
-          x: cx + Math.cos(ang) * r,
-          y: cy + Math.sin(ang) * r,
-        };
-      }
-    }
+    placeTree(comp, cx, cy);
   }
 
-  // Action chips orbit their parent (same as force sim).
+  // Action chips orbit their parent.
   rawNodes.forEach((n, i) => {
     if (classes[i] !== "action") return;
     const parentSlug = Object.values(n.neighbors ?? {})[0];
@@ -578,16 +656,23 @@ export function layoutRadialTree(
     };
   });
 
+  // Final collision clean-up so same-ring siblings with tiny slices
+  // get shoved apart.
+  const activeIdx = rawNodes
+    .map((_, i) => i)
+    .filter((i) => classes[i] !== "action");
+  resolveCollisions(pos, activeIdx, minPair, 16);
+
   rawNodes.forEach((n, i) => {
     result.set(n.slug, { x: pos[i].x, y: pos[i].y, class: classes[i] });
   });
   return result;
 }
 
-/** Group nodes by biome (falling through to subgraph), arrange each
- *  group as a circle, and place the group centres around a larger
- *  outer ring. Edges between groups cross the inner empty space;
- *  edges inside a group are short.
+/** Group nodes by biome (falling through to subgraph); place each
+ *  group's members in a tight phyllotaxis-like spiral (so big groups
+ *  don't pack into a single overflowing ring) and arrange the group
+ *  centres around a larger outer ring.
  *
  *  Good for: worlds with strong biome-level separation, where users
  *  want to see "which area is which" before "what connects to what". */
@@ -596,17 +681,15 @@ export function layoutBiomeCluster(
   rawEdges: GraphEdge[],
   opts: LayoutOptions,
 ): LayoutResult {
-  // Silence lint — edges aren't needed for this layout; topology
-  // implicit via grouping.
-  void rawEdges;
+  void rawEdges; // topology implicit via grouping.
 
   const result: LayoutResult = new Map();
   if (rawNodes.length === 0) return result;
   const classes = rawNodes.map((n) => classifyNode(n));
   const idx = new Map<string, number>();
   rawNodes.forEach((n, i) => idx.set(n.slug, i));
+  const minPair = opts.minPairDistance ?? 110;
 
-  // Group by biome OR subgraph (biome preferred).
   const groups = new Map<string, number[]>();
   for (let i = 0; i < rawNodes.length; i++) {
     if (classes[i] === "action") continue;
@@ -617,42 +700,65 @@ export function layoutBiomeCluster(
     groups.set(key, arr);
   }
 
-  // Sort group keys for determinism.
   const keys = [...groups.keys()].sort();
-  const outerRadius = Math.min(opts.width, opts.height) * 0.38;
+  // Cluster radius per group — fit a phyllotaxis pack so each member
+  // occupies ~minPair × minPair area.
+  // clusterRadius ≈ minPair × sqrt(n / π)   (disc of area n × cell).
+  const clusterRadius = (n: number) =>
+    Math.max(minPair * 0.6, minPair * Math.sqrt(Math.max(1, n) / Math.PI));
+  const radii = keys.map((k) => clusterRadius(groups.get(k)!.length));
+  // Outer ring: big enough to separate adjacent cluster discs.
+  const biggestPair = (() => {
+    let worst = 0;
+    for (let a = 0; a < radii.length; a++)
+      for (let b = a + 1; b < radii.length; b++)
+        worst = Math.max(worst, radii[a] + radii[b] + minPair);
+    return worst;
+  })();
+  const outerRadiusRaw = Math.max(
+    minPair * 2,
+    (biggestPair * keys.length) / (2 * Math.PI),
+  );
+  // Fit inside canvas with a bit of margin for cluster discs.
+  const maxCanvas = Math.min(opts.width, opts.height) / 2;
+  const biggestRadius = radii.reduce((a, b) => Math.max(a, b), 0);
+  const outerRadius = Math.max(
+    minPair,
+    Math.min(outerRadiusRaw, maxCanvas - biggestRadius - 40),
+  );
+
   const cx = opts.width / 2;
   const cy = opts.height / 2;
   const pos: Vec[] = rawNodes.map(() => ({ x: cx, y: cy }));
 
-  // Place group centres around the outer ring.
   for (let g = 0; g < keys.length; g++) {
     const key = keys[g];
     const members = groups.get(key)!;
-    // Members sort — stable inner order.
     members.sort((a, b) => (rawNodes[a].slug < rawNodes[b].slug ? -1 : 1));
-
     const outerAng = (g / Math.max(1, keys.length)) * Math.PI * 2 - Math.PI / 2;
-    const gx = cx + Math.cos(outerAng) * outerRadius;
-    const gy = cy + Math.sin(outerAng) * outerRadius;
+    const gx = keys.length === 1 ? cx : cx + Math.cos(outerAng) * outerRadius;
+    const gy = keys.length === 1 ? cy : cy + Math.sin(outerAng) * outerRadius;
 
-    // Each group's inner radius scales with its size.
-    const innerRadius = Math.max(40, Math.sqrt(members.length) * 28);
     if (members.length === 1) {
       pos[members[0]] = { x: gx, y: gy };
       continue;
     }
-    const step = (Math.PI * 2) / members.length;
+    // Phyllotaxis spiral (Vogel's model): r_i = c × √i, θ_i = i × 137.508°.
+    // Produces ~uniform packing within a disc.
+    const cell = minPair * 0.95;
+    const c = cell / Math.SQRT2;
+    const goldAng = Math.PI * (3 - Math.sqrt(5)); // 137.5° in radians.
     const base = (hashString(key) % 360) * (Math.PI / 180);
     for (let i = 0; i < members.length; i++) {
-      const ang = base + i * step;
+      const r = c * Math.sqrt(i + 0.5);
+      const ang = base + i * goldAng;
       pos[members[i]] = {
-        x: gx + Math.cos(ang) * innerRadius,
-        y: gy + Math.sin(ang) * innerRadius,
+        x: gx + Math.cos(ang) * r,
+        y: gy + Math.sin(ang) * r,
       };
     }
   }
 
-  // Action chips orbit parent.
   rawNodes.forEach((n, i) => {
     if (classes[i] !== "action") return;
     const parentSlug = Object.values(n.neighbors ?? {})[0];
@@ -664,6 +770,11 @@ export function layoutBiomeCluster(
       y: pos[pi].y + Math.sin(seedAng) * 60,
     };
   });
+
+  const activeIdx = rawNodes
+    .map((_, i) => i)
+    .filter((i) => classes[i] !== "action");
+  resolveCollisions(pos, activeIdx, minPair, 16);
 
   rawNodes.forEach((n, i) => {
     result.set(n.slug, { x: pos[i].x, y: pos[i].y, class: classes[i] });

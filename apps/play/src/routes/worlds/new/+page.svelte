@@ -224,20 +224,21 @@
 					{/if}
 				</fieldset>
 
-				<!-- Customize disclosure. -->
-				<details
-					class="rounded border border-mist-800/40 bg-velvet-900/40 p-4"
-					open={customize}
-				>
-					<summary
-						class="cursor-pointer font-hand text-base text-candle-300 select-none"
+				<!-- Customize disclosure. Plain button + controlled div so the
+				     browser's native <details> toggle doesn't fight our state. -->
+				<div class="rounded border border-mist-800/40 bg-velvet-900/40 p-4">
+					<button
+						type="button"
+						class="cursor-pointer font-hand text-base text-candle-300 select-none w-full text-left"
+						aria-expanded={customize}
 						onclick={() => (customize = !customize)}
 					>
+						<span class="mr-1 text-xs text-candle-500">{customize ? '▼' : '▶'}</span>
 						customize flags…
 						<span class="ml-1 text-xs text-mist-500">
 							{customize ? '(overriding preset)' : '(optional; preset applies otherwise)'}
 						</span>
-					</summary>
+					</button>
 					{#if customize}
 						<input type="hidden" name="customize" value="on" />
 						<p class="mt-3 text-xs text-mist-500">
@@ -261,7 +262,7 @@
 							{/each}
 						</div>
 					{/if}
-				</details>
+				</div>
 
 				<label class="block space-y-1">
 					<span class="font-hand text-base text-candle-300">
