@@ -118,8 +118,13 @@ function decodeBase64(b64: string): Uint8Array {
   // Strip `data:image/png;base64,` prefix if present.
   const comma = b64.indexOf(",");
   const payload = comma > 0 && b64.slice(0, comma).includes("base64") ? b64.slice(comma + 1) : b64;
-  // Buffer is available in Convex Node action runtime.
-  return new Uint8Array(Buffer.from(payload, "base64"));
+  // Convex V8 action runtime — no Node `Buffer`. Use `atob` + manual
+  // byte copy. For 128×128 PNGs (~10 KB) this is trivially cheap; we'd
+  // want the Node runtime only if we start ingesting MB-sized frames.
+  const bin = atob(payload);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 // --------------------------------------------------------------------

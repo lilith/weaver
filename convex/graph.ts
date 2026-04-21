@@ -138,12 +138,23 @@ export const loadGraphMap = query({
         palette?.overrides?.["--color-bg"] ??
         null;
 
-      // Tile URL: entity override first, then top-voted map_tile rendering.
+      // Tile URL resolution (spec 26 §Pick / generate):
+      //   1. entity_overrides[slug]     — per-location pin
+      //   2. biome_overrides[biome]     — per-biome default
+      //   3. entity_art_renderings      — map_tile mode from art curation
+      //   4. null (client falls back to biome palette swatch)
       let tile_url: string | null = null;
       const entityOverride = binding?.entity_overrides?.[e.slug] as Id<"tile_library"> | undefined;
       if (entityOverride) {
         const tile = await ctx.db.get(entityOverride);
         if (tile) tile_url = publicTileUrl((tile as any).blob_hash);
+      }
+      if (!tile_url && biomeSlug) {
+        const biomeOverride = binding?.biome_overrides?.[biomeSlug] as Id<"tile_library"> | undefined;
+        if (biomeOverride) {
+          const tile = await ctx.db.get(biomeOverride);
+          if (tile) tile_url = publicTileUrl((tile as any).blob_hash);
+        }
       }
       if (!tile_url && r2Public) {
         const rendering = await ctx.db
