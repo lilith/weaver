@@ -302,6 +302,8 @@ async function dispatch() {
       return cmdEra(rest);
     case "theme":
       return cmdTheme(rest);
+    case "tile":
+      return cmdTile(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -2128,6 +2130,99 @@ async function cmdTheme([sub, ...a]) {
 }
 
 // ---------------------------------------------------------------
+// tile — style binding + Haiku-driven picker (spec 26).
+
+async function cmdTile([sub, ...a]) {
+  needSession();
+  const client = getClient();
+  const world_slug = () => flags.world ?? cfg.world_slug ?? (err("no world", 2), "");
+
+  if (sub === "styles") {
+    const rows = await client.query(ref("tile_library.listStyles"), {
+      session_token: cfg.session_token,
+    });
+    return out(rows, (o) =>
+      o.length === 0
+        ? "(no styles in library yet)"
+        : o.map((s) => `${s.style_tag.padEnd(28)} ${s.count} tiles  kinds: ${s.kinds.join(",")}`).join("\n"),
+    );
+  }
+
+  if (sub === "bind") {
+    const [style_tag] = a;
+    if (!style_tag) err("usage: weaver tile bind <style_tag>", 2);
+    const r = await client.mutation(ref("tile_library.setWorldStyle"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      style_tag,
+    });
+    return out({ ok: true, ...r }, () => `bound ${world_slug()} → ${style_tag}`);
+  }
+
+  if (sub === "binding") {
+    const r = await client.query(ref("tile_library.getWorldBinding"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+    });
+    return out(r, (o) =>
+      o
+        ? `style_tag: ${o.style_tag ?? "(none)"}  entity pins: ${Object.keys(o.entity_overrides ?? {}).length}  biome pins: ${Object.keys(o.biome_overrides ?? {}).length}`
+        : "(no binding)",
+    );
+  }
+
+  if (sub === "pick") {
+    const [slug] = a;
+    if (!slug) err("usage: weaver tile pick <entity_slug>", 2);
+    const r = await client.action(ref("tile_picker.pickTileForLocation"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      entity_slug: slug,
+    });
+    return out(r, (o) => {
+      if (!o) return "(no result)";
+      if (o.action === "pick") return `pick ${o.tile_id} — ${o.reason}`;
+      if (o.action === "generate")
+        return `generate ${o.kind}: "${o.descriptor}"${o.relative_direction ? `  dir=${o.relative_direction}` : ""}${o.relative_distance ? `  dist=${o.relative_distance}` : ""} — ${o.reason}`;
+      return `skip — ${o.reason}`;
+    });
+  }
+
+  if (sub === "backfill") {
+    const limit = Number(flags.limit ?? 20);
+    const r = await client.action(ref("tile_picker.backfillWorldTiles"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      limit,
+    });
+    return out(r, (o) =>
+      `processed=${o.processed} picks=${o.picks} generates=${o.generates} skips=${o.skips}\n` +
+      o.results.map((x) => `  ${x.slug.padEnd(32)} ${x.outcome}`).join("\n"),
+    );
+  }
+
+  if (sub === "hint") {
+    const [slug, descriptor, dir, dist] = a;
+    if (!slug || !descriptor)
+      err('usage: weaver tile hint <entity_slug> "<descriptor>" [direction] [near|mid|far]', 2);
+    const r = await client.mutation(ref("tile_picker.setMapHint"), {
+      session_token: cfg.session_token,
+      world_slug: world_slug(),
+      entity_slug: slug,
+      descriptor,
+      relative_direction: dir,
+      relative_distance: dist,
+    });
+    return out(r, () => `map_hint saved for ${slug}`);
+  }
+
+  err(
+    "usage: weaver tile styles | bind <style_tag> | binding | pick <slug> | backfill [--limit N] | hint <slug> <descriptor> [dir] [dist]",
+    2,
+  );
+}
+
+// ---------------------------------------------------------------
 // Usage
 
 function usage(topic) {
@@ -2144,6 +2239,9 @@ play:        pick <idx|label>  weave "<text>"  go <slug>  wait  clock [+<dur>|se
              state  state set <path> <json>  state inc <path> <n>
              journey resolve <id> <slugs>  journey dismiss <id>
 fix:         fix <type> <slug> <field> <json> [--reason "..."]    (member-level, non-destructive)
+tile:        tile styles | bind <style_tag> | binding | pick <entity_slug>
+             tile backfill [--limit N]  (Haiku picks/describes tiles for every canonical location)
+             tile hint <entity_slug> "<descriptor>" [dir] [near|mid|far]
 
 flags:       --json   structured output  --world <slug>  override current  --full  don't truncate
              --type <type>  filter entity list  --limit N  cap results  --url <url>  override convex

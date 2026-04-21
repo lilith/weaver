@@ -1,9 +1,17 @@
 # Weaver — Graph Map + Pixel Tile Library
 
-**Status:** designed (2026-04-21); implementation split across Wave-2.5 sessions.
-**Flag:** `flag.graph_map` (plan: default off until one world has a style_tag bound and ≥10 library tiles).
+**Status:** Sessions 1–5 shipped (2026-04-20). Session 6 — batch library seed — pending.
+**Flag:** `flag.graph_map` (default off). Flip on per-world once `style_tag` is bound and ≥10 library tiles exist.
 **Feasibility:** single-family-instance scale — ≤ 1K locations per world, ≤ 200 tiles in library per style. Force sim runs client-side, ≤ 500ms to settle.
-**Supersedes:** the grid-based `/map/[world]` shipped in `385cccc`. Retire on replacement.
+**Supersedes:** the grid-based `/map/[world]` shipped in `385cccc`. The grid path still loads when `flag.graph_map = off`; retiring it entirely is post-Session-6.
+
+## What shipped (Sessions 1–5)
+
+- **Layer 1 — pure engine.** `packages/engine/src/graph-layout/` with `classifyNode`, `directionToVector`, `layoutSubgraph` (seeded force sim + cone bias + soft pins + subgraph clustering + BFS seed). 41 unit tests in `scripts/graph-layout-tests.mjs`. Exposed via `@weaver/engine/graph-layout`.
+- **Layer 2 — data plane.** `convex/graph.ts` — `loadGraphMap` (one-round-trip bundle), `pinNodePosition` / `unpinNode` (member-gated), `incrementEdgeTraffic` (internal; fired from `locations.applyOption` on every cross-location transition). Schema adds `entities.map_shape / subgraph / map_hint` and new tables `map_pins` + `edge_traffic`.
+- **Layer 3 — UI.** `apps/play/src/lib/map-graph/GraphMap.svelte` — SVG canvas, pan+zoom, drag-to-pin, tap-to-goto, right-click context menu, live `useQuery(api.graph.loadGraphMap)`. `/map/[world]` routes to graph or grid based on `flag.graph_map`.
+- **Layer 4 — Haiku picker + CLI.** `convex/tile_picker.ts` with `pickTileForLocation` (owner-only action), `backfillWorldTiles` (owner-only batch), `setMapHint` (owner-only). `weaver tile {styles,bind,binding,pick,backfill,hint}` subcommands wire the whole surface to the CLI.
+- **Layer 5 — isolation + typecheck.** 7 new adversarial Playwright tests (35 total now pass). svelte-check: 0 errors / 0 warnings. Convex tsc clean. Gameplay-sweep 38/38.
 
 ## One-paragraph summary
 
@@ -240,12 +248,12 @@ Weekly cron GCs edges with `crossings == 0 && last_crossed_at < 60d`. Edges with
 
 ## Session handoff (what to do next)
 
-- Session 1 (this one): spec + schema + ingest action + one test tileset in-hand. **Do not implement layout or UI in this session** — defer.
-- Session 2: implement Layer 1 (engine graph-layout module) with unit tests.
-- Session 3: implement Layer 2 (convex/graph.ts) + schema migration + edge_traffic increment in applyOption.
-- Session 4: implement Layer 3 (`<GraphMap>`) + replace the grid `/map/[world]` with the graph version.
-- Session 5: wire the Haiku picker in `expansion.insertExpandedLocation` + an owner admin CLI to backfill existing locations.
-- Session 6: batch-seed the real library — `cozy-watercolor-pixel` 60 assets, `grim-corporate-pixel` 60 assets, `classic-fantasy-pixel` 60 assets. Ingest. Bind Quiet Vale to cozy, The Office to grim.
+- Session 1 ✅ spec + schema + ingest action + one test tileset in-hand.
+- Session 2 ✅ Layer 1 (engine graph-layout module) + 41 unit tests.
+- Session 3 ✅ Layer 2 (convex/graph.ts) + schema migration + `incrementEdgeTraffic` in `applyOption`.
+- Session 4 ✅ Layer 3 (`<GraphMap>`) + `/map/[world]` routes behind `flag.graph_map`.
+- Session 5 ✅ Haiku picker (`convex/tile_picker.ts`) + owner-only CLI (`weaver tile …`) + 7 isolation tests.
+- Session 6 ⏳ batch-seed the real library — `cozy-watercolor-pixel` 60 assets, `grim-corporate-pixel` 60 assets, `classic-fantasy-pixel` 60 assets. Ingest. Bind Quiet Vale to cozy, The Office to grim. This is author-orchestrated (pixellab MCP + ingestPixellabAsset); main agent doesn't generate pixel art.
 
 Each session lands in its own commit(s). The contracts in Layers 1–3 are what keep the pieces replaceable.
 

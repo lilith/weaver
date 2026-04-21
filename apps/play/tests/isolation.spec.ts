@@ -477,6 +477,115 @@ test.describe("Isolation — cross-user", () => {
 		);
 	});
 
+	// ----- spec 26 graph-map + tile-picker -----
+
+	test("B cannot loadGraphMap against A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.graph.loadGraphMap, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"graph.loadGraphMap"
+		);
+	});
+
+	test("B cannot pinNodePosition on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.graph.pinNodePosition, {
+					session_token: tokenB,
+					world_slug: slug,
+					slug: "village-square",
+					x: 42,
+					y: 42
+				}),
+			"graph.pinNodePosition"
+		);
+	});
+
+	test("B cannot unpinNode on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.graph.unpinNode, {
+					session_token: tokenB,
+					world_slug: slug,
+					slug: "village-square"
+				}),
+			"graph.unpinNode"
+		);
+	});
+
+	test("B cannot pickTileForLocation on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.action(api.tile_picker.pickTileForLocation, {
+					session_token: tokenB,
+					world_slug: slug,
+					entity_slug: "village-square"
+				}),
+			"tile_picker.pickTileForLocation"
+		);
+	});
+
+	test("B cannot backfillWorldTiles on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.action(api.tile_picker.backfillWorldTiles, {
+					session_token: tokenB,
+					world_slug: slug,
+					limit: 5
+				}),
+			"tile_picker.backfillWorldTiles"
+		);
+	});
+
+	test("B cannot setMapHint on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.tile_picker.setMapHint, {
+					session_token: tokenB,
+					world_slug: slug,
+					entity_slug: "village-square",
+					descriptor: "h1jack3d"
+				}),
+			"tile_picker.setMapHint"
+		);
+	});
+
+	test("B cannot setWorldStyle on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, { session_token: tokenA });
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.tile_library.setWorldStyle, {
+					session_token: tokenB,
+					world_slug: slug,
+					style_tag: "pwn-style"
+				}),
+			"tile_library.setWorldStyle"
+		);
+	});
+
 	test("B cannot import a world over A's slug", async () => {
 		const client = new ConvexHttpClient(CONVEX_URL);
 		// Any legit world_slug will do — we're testing the slug-collision guard.
