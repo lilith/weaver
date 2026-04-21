@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "push-convex": "CONVEX_DEPLOYMENT=dev:friendly-chameleon-175 convex dev --once",
+    "deploy": "echo \"Error: 'npx convex deploy' targets the unused animated-dodo-350 deployment. Use 'pnpm run push-convex' to push to friendly-chameleon-175 (the one deployment backing theweaver.quest).\" && exit 1"
   },
   "keywords": [],
   "author": "",

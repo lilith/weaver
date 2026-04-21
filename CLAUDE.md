@@ -162,6 +162,24 @@ npx convex env set KEY value         # for server-side (Convex actions)
 
 Never edit `convex/_generated/` by hand — regenerated on every `convex dev`.
 
+## ⚠️ ONE Convex deployment — never run `npx convex deploy`
+
+**We have ONE live Convex deployment backing theweaver.quest: `friendly-chameleon-175`.** The Convex account also has a `animated-dodo-350` slot marked "prod", but it's empty and unused — `npx convex deploy` (without flags) targets it by default, and running it silently breaks nothing (prod stays stale) but wastes a deploy.
+
+**To push code to the real deployment:**
+
+```bash
+pnpm run push-convex                 # = CONVEX_DEPLOYMENT=dev:friendly-chameleon-175 convex dev --once
+```
+
+This is what the root `package.json` has. Do NOT:
+- `npx convex deploy` — pushes to unused prod slot.
+- `pnpm run deploy` — the root script has a guard that exits with an error explaining this.
+
+**Cloudflare Pages** (`PUBLIC_CONVEX_URL` in both preview + production env) points at `friendly-chameleon-175`. Our site, our CLI (`~/.weaver-cli.json` → `friendly-chameleon-175`), and every script in `scripts/*.mjs` all target the same deployment. Single tier, per user preference (`feedback_infra_scale`).
+
+**If `animated-dodo-350` ever needs removal:** only the Convex dashboard can delete a prod deployment. Leave it idle; don't bother.
+
 **`scripts/weaver.mjs` — the agent CLI.** Non-interactive, one-shot-per-invocation, LLM-optimized. Build/explore your own sandbox world (author mode: full rwx) or read-only inspect someone else's world with narrow non-destructive fix caps (observer mode, auto-detected from world ownership). Supports the full play loop + clock fast-forward + direct state mutation + hidden-option dry-run (the UX-01 inspection surface the browser can't show). Back-plane lives in `convex/cli.ts`. Usage: `node scripts/weaver.mjs help`. Session persisted to `~/.weaver-cli.json`. Use it before driving the browser when the question is "does this feel LitRPG-y / fun / coherent" — it's an order of magnitude faster than Playwright for that loop.
 
 ## Key behavioral rules for future sessions
