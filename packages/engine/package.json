@@ -14,7 +14,8 @@
     "./effects": "./src/effects/index.ts",
     "./flows": "./src/flows/index.ts",
     "./art": "./src/art/prompts.ts",
-    "./diagnostics": "./src/diagnostics/index.ts"
+    "./diagnostics": "./src/diagnostics/index.ts",
+    "./graph-layout": "./src/graph-layout/index.ts"
   },
   "peerDependencies": {
     "@noble/hashes": "*",

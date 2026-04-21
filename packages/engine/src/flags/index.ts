@@ -47,6 +47,7 @@ export const REGISTRY_DEFAULTS: Record<string, boolean> = {
 	"flag.biome_palette_gen": false,
 	"flag.module_dialogue": false,
 	"flag.module_combat": false,
+	"flag.graph_map": false,
 };
 
 /** A feature_flags row shape. Matches the Convex schema at
