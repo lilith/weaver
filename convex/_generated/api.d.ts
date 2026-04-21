@@ -25,6 +25,7 @@ import type * as eras from "../eras.js";
 import type * as expansion from "../expansion.js";
 import type * as flags from "../flags.js";
 import type * as flows from "../flows.js";
+import type * as graph from "../graph.js";
 import type * as import_ from "../import.js";
 import type * as journeys from "../journeys.js";
 import type * as locations from "../locations.js";
@@ -39,6 +40,7 @@ import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
 import type * as themes from "../themes.js";
 import type * as tile_library from "../tile_library.js";
+import type * as tile_picker from "../tile_picker.js";
 import type * as worlds from "../worlds.js";
 
 import type {
@@ -65,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   expansion: typeof expansion;
   flags: typeof flags;
   flows: typeof flows;
+  graph: typeof graph;
   import: typeof import_;
   journeys: typeof journeys;
   locations: typeof locations;
@@ -79,6 +82,7 @@ declare const fullApi: ApiFromModules<{
   sessions: typeof sessions;
   themes: typeof themes;
   tile_library: typeof tile_library;
+  tile_picker: typeof tile_picker;
   worlds: typeof worlds;
 }>;
 

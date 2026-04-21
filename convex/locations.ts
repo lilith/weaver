@@ -16,6 +16,7 @@ import {
 } from "./effects.js";
 import { logBugs } from "./diagnostics.js";
 import { sanitizeCharacterState } from "@weaver/engine/diagnostics";
+import { incrementEdgeTraffic } from "./graph.js";
 import { internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 
@@ -355,6 +356,18 @@ export const applyOption = mutation({
       // cross the prefetch → visited threshold here.
       if (newLocationEntity.visited_at == null) {
         await ctx.db.patch(newLocationEntity._id, { visited_at: Date.now() });
+      }
+      // Graph-map traffic (spec 26 §Traffic data). Increment the directed
+      // edge from the origin location to the new one so <GraphMap> can
+      // render busier paths with higher stroke opacity.
+      if (entity._id !== newLocationEntity._id) {
+        await incrementEdgeTraffic(
+          ctx,
+          world_id,
+          branch_id,
+          entity.slug,
+          newLocationEntity.slug,
+        );
       }
       const j = await recordJourneyTransition(ctx, {
         world_id,

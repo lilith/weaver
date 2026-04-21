@@ -137,6 +137,20 @@ export default defineSchema({
     // the pre-warmed draft instead of chaining to expansion.
     prefetched_from_entity_id: v.optional(v.id("entities")),
     prefetched_from_option_label: v.optional(v.string()),
+    // Graph-map layout (spec 26). `map_shape` overrides the classifier
+    // when present; `subgraph` overrides biome-based implicit clustering;
+    // `map_hint` stores the AI's relative-direction suggestion at
+    // expansion time so first-render layout has a hint better than
+    // pure BFS jitter.
+    map_shape: v.optional(
+      v.union(
+        v.literal("spatial"),
+        v.literal("action"),
+        v.literal("floating"),
+      ),
+    ),
+    subgraph: v.optional(v.string()),
+    map_hint: v.optional(v.any()),
     // Scene / portrait art for this entity — blob hash (stored in R2).
     // Regenerates on explicit user action; otherwise sticky once set.
     art_blob_hash: v.optional(v.string()),
@@ -532,6 +546,34 @@ export default defineSchema({
     .index("by_style_active", ["style_tag", "active"])
     .index("by_pixellab_asset", ["pixellab_asset_id"])
     .index("by_blob_hash", ["blob_hash"]),
+
+  // Graph-map pins — per-(world, branch, slug). Any family member may
+  // drag; the latest drag wins. Absence = force-solved position.
+  map_pins: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    slug: v.string(),
+    x: v.number(),
+    y: v.number(),
+    pinned_by_user_id: v.id("users"),
+    pinned_at: v.number(),
+  })
+    .index("by_world_branch", ["world_id", "branch_id"])
+    .index("by_world_slug", ["world_id", "slug"]),
+
+  // Graph-map edge traffic — how often players cross a given edge. Used
+  // to render busier paths with higher stroke opacity. Cheap counter;
+  // weekly GC sweeps rows with crossings=0 older than 60 days.
+  edge_traffic: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    from_slug: v.string(),
+    to_slug: v.string(),
+    crossings: v.number(),
+    last_crossed_at: v.number(),
+  })
+    .index("by_branch_edge", ["branch_id", "from_slug", "to_slug"])
+    .index("by_branch_time", ["branch_id", "last_crossed_at"]),
 
   // Per-world style binding + pinned overrides. One row per world;
   // absence = use the static palette swatches (pre-library fallback).
