@@ -117,16 +117,22 @@ export const seedFromDescription = action({
     session_token: v.string(),
     description: v.string(),
     character_name: v.optional(v.string()),
+    content_rating: v.optional(
+      v.union(v.literal("family"), v.literal("teen"), v.literal("adult")),
+    ),
   },
   handler: async (
     ctx,
-    { session_token, description, character_name },
+    { session_token, description, character_name, content_rating },
   ): Promise<{ world_id: Id<"worlds">; slug: string }> => {
     const trimmed = description.trim();
     if (trimmed.length < 8)
-      throw new Error("description too short — tell me 1–3 sentences");
-    if (trimmed.length > 1200)
-      throw new Error("description too long — keep it under ~1200 chars");
+      throw new Error("description too short — tell me a sentence or two");
+    // Upper bound is a sanity guard against accidental book-sized pastes
+    // (20k chars ≈ ~5k tokens ≈ $0.08 in Opus input). UI imposes no cap.
+    if (trimmed.length > 20000)
+      throw new Error("description too long — keep it under ~20000 chars");
+    const rating = content_rating ?? "family";
 
     // Gate non-technical stubs with the session so we catch unauth'd
     // callers before burning an Opus call.
@@ -149,7 +155,7 @@ export const seedFromDescription = action({
       messages: [
         {
           role: "user",
-          content: `<seed_idea>${trimmed}</seed_idea>\n\nRespond with strict JSON only, matching the schema.`,
+          content: `<content_rating>${rating}</content_rating>\n<seed_idea>${trimmed}</seed_idea>\n\nRespond with strict JSON only, matching the schema. Use the content_rating above verbatim.`,
         },
       ],
     });
@@ -170,6 +176,11 @@ export const seedFromDescription = action({
     if (!bundle?.bible?.name || !bundle?.biome?.slug || !bundle?.starter?.slug) {
       throw new Error("generated bundle missing required fields");
     }
+
+    // Force the world's content_rating to the caller's selection — Opus
+    // is asked to calibrate tone to that rating, but the owner's pick is
+    // authoritative regardless of what Opus returns.
+    bundle.bible.content_rating = rating;
 
     return await ctx.runMutation(internal.worlds.insertSeededWorld, {
       session_token,
@@ -300,7 +311,12 @@ function slugify(s: string): string {
   );
 }
 
-const SEED_SYSTEM_PROMPT = `You are Weaver, a collaborative world-building game engine. A new player has given you a short seed idea. Generate a minimal starting bundle: world bible, one biome, and one starter location.
+const SEED_SYSTEM_PROMPT = `You are Weaver, a collaborative world-building game engine. A new player has given you a seed idea plus a content rating. Generate a minimal starting bundle: world bible, one biome, and one starter location — calibrated to the rating.
+
+Content ratings:
+- family: no on-page violence, no sexual content, no substance abuse, no disturbing imagery; stakes via puzzles, wonder, social conflict.
+- teen: on-page violence can be stylised (no gore), romantic content can exist but not explicit, darker themes (loss, fear, moral ambiguity) are allowed.
+- adult: on-page violence, explicit themes, and darker tones are permitted; still tasteful, not gratuitous.
 
 Return strict JSON matching exactly this shape:
 
@@ -308,7 +324,7 @@ Return strict JSON matching exactly this shape:
   "bible": {
     "name": "<short world name, 1-4 words>",
     "tagline": "<one sentence>",
-    "content_rating": "family" | "teen",
+    "content_rating": "family" | "teen" | "adult",
     "tone": {
       "descriptors": ["<3-6 tone words>"],
       "avoid": ["<2-4 tone-killer words>"],
@@ -346,11 +362,11 @@ Return strict JSON matching exactly this shape:
 }
 
 Rules:
-- Match family-friendly content unless the seed explicitly asks otherwise (then teen max).
+- Honor the <content_rating> in the user message verbatim — copy it to bible.content_rating and calibrate prose/tone to it.
 - The starter location has 2-3 options; none need targets (player can weave outward).
 - No options with \`target\`: that's for later expansion; the initial beat stays in-place.
 - No characters/npcs — leave those for the family to author.
-- Prose should match the tone descriptors exactly.`;
+- Prose should match the tone descriptors exactly and stay within the content_rating.`;
 
 // --------------------------------------------------------------------
 // Biome palette auto-gen (UX-05). Opus generates a CSS-variable palette
