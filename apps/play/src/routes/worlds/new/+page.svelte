@@ -116,26 +116,22 @@
 					<legend class="font-hand text-base text-candle-300">content rating</legend>
 					<div class="grid gap-2 sm:grid-cols-3">
 						{#each ['family', 'teen', 'adult'] as const as r (r)}
-							<label
+							<button
+								type="button"
 								class="rating-chip"
 								class:rating-chip-active={contentRating === r}
+								aria-pressed={contentRating === r}
+								onclick={() => (contentRating = r)}
 							>
-								<input
-									type="radio"
-									name="content_rating"
-									value={r}
-									checked={contentRating === r}
-									onchange={() => (contentRating = r)}
-									class="sr-only"
-								/>
 								<span class="font-display text-lg capitalize">{r}</span>
 								<span class="text-xs text-mist-400">{RATING_BLURB[r]}</span>
-							</label>
+							</button>
 						{/each}
 					</div>
+					<input type="hidden" name="content_rating" value={contentRating} />
 					<p class="text-xs text-mist-500">
-						You can change a world's rating later in admin. This is what Opus uses to calibrate
-						tone at generation time.
+						Currently selected: <span class="text-mist-300">{contentRating}</span>. You can change
+						a world's rating later in admin — this sets the tone Opus writes at generation time.
 					</p>
 				</fieldset>
 
