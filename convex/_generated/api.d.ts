@@ -38,6 +38,7 @@ import type * as npc_memory from "../npc_memory.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
 import type * as themes from "../themes.js";
+import type * as tile_library from "../tile_library.js";
 import type * as worlds from "../worlds.js";
 
 import type {
@@ -77,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   sessions: typeof sessions;
   themes: typeof themes;
+  tile_library: typeof tile_library;
   worlds: typeof worlds;
 }>;
 

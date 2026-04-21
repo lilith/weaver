@@ -495,6 +495,59 @@ export default defineSchema({
   }).index("by_world_era", ["world_id", "to_era"]),
 
   // ---------------------------------------------------------------
+  // Tile library — cross-world catalogue of pixellab-generated
+  // assets. Each row is one usable asset (a single tile, a building,
+  // a portrait, a bridge) at a specific style. Worlds opt into a
+  // style_tag and the map/play surfaces pick matching library
+  // assets for their biomes/entities. Regeneration bumps version;
+  // inactive rows stay discoverable for rollback but aren't
+  // auto-picked.
+  tile_library: defineTable({
+    kind: v.union(
+      v.literal("biome_tile"),
+      v.literal("building"),
+      v.literal("path"),
+      v.literal("bridge"),
+      v.literal("portrait"),
+      v.literal("map_object"),
+      v.literal("character_walk"),
+      v.literal("misc"),
+    ),
+    style_tag: v.string(),
+    subject_tags: v.array(v.string()),
+    name: v.string(),
+    blob_hash: v.string(),
+    width: v.number(),
+    height: v.number(),
+    view: v.optional(v.string()),
+    pixellab_asset_id: v.optional(v.string()),
+    pixellab_parent_id: v.optional(v.string()),
+    generation: v.optional(v.any()),
+    version: v.number(),
+    active: v.boolean(),
+    created_by_user_id: v.optional(v.id("users")),
+    created_at: v.number(),
+  })
+    .index("by_kind_style", ["kind", "style_tag"])
+    .index("by_style_active", ["style_tag", "active"])
+    .index("by_pixellab_asset", ["pixellab_asset_id"])
+    .index("by_blob_hash", ["blob_hash"]),
+
+  // Per-world style binding + pinned overrides. One row per world;
+  // absence = use the static palette swatches (pre-library fallback).
+  world_style_bindings: defineTable({
+    world_id: v.id("worlds"),
+    style_tag: v.string(),
+    // biome_slug → tile_library id; overrides the deterministic pick
+    // for every location in that biome.
+    biome_overrides: v.any(), // Record<string, Id<"tile_library">>
+    // entity_slug → tile_library id; pin a specific place or
+    // character to a specific asset.
+    entity_overrides: v.any(), // Record<string, Id<"tile_library">>
+    updated_at: v.number(),
+  }).index("by_world", ["world_id"]),
+
+  // ---------------------------------------------------------------
   // Runtime bugs — invariant violations caught by sanitizers on the
   // hot path. Rate-limited per (code, world): the same code for the
   // same world increments seen_count rather than inserting a new row.
