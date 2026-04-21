@@ -48,6 +48,9 @@ export const REGISTRY_DEFAULTS: Record<string, boolean> = {
 	"flag.module_dialogue": false,
 	"flag.module_combat": false,
 	"flag.graph_map": false,
+	// Stat-row visibility on the inventory panel. Default on for
+	// back-compat (pre-flag worlds); cozy-narrative explicitly off.
+	"flag.litrpg_stats": true,
 };
 
 /** A feature_flags row shape. Matches the Convex schema at

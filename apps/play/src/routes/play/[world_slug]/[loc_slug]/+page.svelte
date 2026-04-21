@@ -329,10 +329,10 @@
 		</form>
 	</section>
 
-	{@render inventoryPanel(data.character_state)}
+	{@render inventoryPanel(data.character_state, data.litrpg_stats_enabled ?? true)}
 </article>
 
-{#snippet inventoryPanel(state: Record<string, unknown>)}
+{#snippet inventoryPanel(state: Record<string, unknown>, showStats: boolean)}
 	{@const inv = state?.inventory as any}
 	{@const entries =
 		inv && typeof inv === 'object' && !Array.isArray(inv)
@@ -340,9 +340,9 @@
 			: Array.isArray(inv) && inv.length > 0
 				? inv.map((i: any, ix: number) => [typeof i === 'string' ? i : (i?.slug ?? `item-${ix}`), typeof i === 'string' ? { qty: 1 } : i])
 				: []}
-	{@const hp = state?.hp as number | undefined}
-	{@const gold = state?.gold as number | undefined}
-	{@const energy = state?.energy as number | undefined}
+	{@const hp = showStats ? (state?.hp as number | undefined) : undefined}
+	{@const gold = showStats ? (state?.gold as number | undefined) : undefined}
+	{@const energy = showStats ? (state?.energy as number | undefined) : undefined}
 	{#if entries.length > 0 || typeof hp === 'number' || typeof gold === 'number' || typeof energy === 'number'}
 		<section class="story-card mt-4 space-y-3 px-4 py-3">
 			<div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">

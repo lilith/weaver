@@ -30,24 +30,33 @@ const STYLE_IDS = new Set(
 );
 
 /**
- * Resolve the final enabled-flag set from form data:
- *   - If `customize=on`, trust the explicit `flag.*` checkboxes.
- *   - Else, use the preset's `flags` list verbatim.
- * Anything not in CUSTOMIZABLE_KEYS is ignored (defence in depth
- * against a tampered form posting flag.is_admin or similar).
+ * Resolve {on, off} flag sets from form data:
+ *   - customize=on: for each customizable flag, checkbox-checked goes
+ *     on; unchecked stays at registry default (no explicit off — users
+ *     who want to force-off can just uncheck, relying on default).
+ *   - else: preset.flags → on; preset.flags_off → off.
+ * Anything not in CUSTOMIZABLE_KEYS is ignored (defence in depth).
  */
-function resolveFlags(form: FormData): string[] {
+function resolveFlags(form: FormData): { on: string[]; off: string[] } {
 	const customize = form.get("customize") === "on";
 	if (customize) {
-		const explicit: string[] = [];
+		const on: string[] = [];
+		const off: string[] = [];
 		for (const key of CUSTOMIZABLE_KEYS) {
-			if (form.get(key) === "on") explicit.push(key);
+			// Customize is bidirectional: explicit checked → on, explicit
+			// unchecked → off (overriding registry default). The
+			// checkboxes all submit present-or-absent, so an unchecked
+			// key simply won't be in the form.
+			if (form.get(key) === "on") on.push(key);
+			else off.push(key);
 		}
-		return explicit;
+		return { on, off };
 	}
 	const presetId = form.get("preset") as string | null;
 	const preset = presetById(presetId);
-	return preset ? preset.flags : [];
+	return preset
+		? { on: preset.flags, off: preset.flags_off ?? [] }
+		: { on: [], off: [] };
 }
 
 function resolveStyleTag(form: FormData): string | null {
@@ -59,31 +68,28 @@ function resolveStyleTag(form: FormData): string | null {
 async function applyPostSeedConfig(
 	session_token: string,
 	world_slug: string,
-	flags: string[],
+	flagsOn: string[],
+	flagsOff: string[],
 	style_tag: string | null,
 ): Promise<void> {
 	const client = convexServer();
-	// Fire flag.set calls in parallel. Each is idempotent — server
-	// inserts or patches the (key, scope_kind, scope_id) row.
-	await Promise.all(
-		flags.map((flag_key) =>
-			client
-				.mutation(api.flags.set, {
-					session_token,
-					flag_key,
-					scope_kind: "world",
-					scope_id: world_slug,
-					enabled: true,
-					notes: "set at world creation via /worlds/new preset",
-				})
-				.catch((e) => {
-					// Swallow individual flag failures — the world itself is
-					// already created, and the user can toggle flags later
-					// in /admin. Log to stderr so operator can see.
-					console.error(`[worlds/new] flag ${flag_key} failed:`, (e as Error).message);
-				}),
-		),
-	);
+	const setOne = (flag_key: string, enabled: boolean) =>
+		client
+			.mutation(api.flags.set, {
+				session_token,
+				flag_key,
+				scope_kind: "world",
+				scope_id: world_slug,
+				enabled,
+				notes: `set at world creation via /worlds/new (preset, enabled=${enabled})`,
+			})
+			.catch((e) => {
+				console.error(`[worlds/new] flag ${flag_key} failed:`, (e as Error).message);
+			});
+	await Promise.all([
+		...flagsOn.map((k) => setOne(k, true)),
+		...flagsOff.map((k) => setOne(k, false)),
+	]);
 	if (style_tag) {
 		try {
 			await client.mutation(api.tile_library.setWorldStyle, {
@@ -114,12 +120,16 @@ export const actions: Actions = {
 		} catch (e) {
 			return fail(500, { error: (e as Error).message });
 		}
-		await applyPostSeedConfig(
-			locals.session_token,
-			slug,
-			resolveFlags(form),
-			resolveStyleTag(form),
-		);
+		{
+			const { on, off } = resolveFlags(form);
+			await applyPostSeedConfig(
+				locals.session_token,
+				slug,
+				on,
+				off,
+				resolveStyleTag(form),
+			);
+		}
 		throw redirect(303, `/play/${slug}`);
 	},
 
@@ -166,12 +176,16 @@ export const actions: Actions = {
 				customize,
 			});
 		}
-		await applyPostSeedConfig(
-			locals.session_token,
-			slug,
-			resolveFlags(form),
-			resolveStyleTag(form),
-		);
+		{
+			const { on, off } = resolveFlags(form);
+			await applyPostSeedConfig(
+				locals.session_token,
+				slug,
+				on,
+				off,
+				resolveStyleTag(form),
+			);
+		}
 		throw redirect(303, `/play/${slug}`);
 	},
 };

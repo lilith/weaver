@@ -14,6 +14,7 @@ import {
   internalMutation,
   internalQuery,
   mutation,
+  query,
 } from "./_generated/server.js";
 import { v } from "convex/values";
 import { internal } from "./_generated/api.js";
@@ -490,6 +491,105 @@ export const setMapHint = mutation({
         proposed_at: Date.now(),
       },
     });
+    return { ok: true };
+  },
+});
+
+/** Admin — list every canonical location with its current map_hint and
+ *  whether a tile binding is pinned. Owner-only. Used by
+ *  /admin/hints/<world_slug> to let the author edit gen briefs. */
+export const listHintsForWorld = query({
+  args: { session_token: v.string(), world_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world?.current_branch_id) return null;
+    const { user_id } = await resolveMember(ctx as any, session_token, world._id);
+    if (world.owner_user_id !== user_id) throw new Error("owner-only");
+    const branch_id = world.current_branch_id;
+
+    const binding = await ctx.db
+      .query("world_style_bindings")
+      .withIndex("by_world", (q: any) => q.eq("world_id", world._id))
+      .first();
+    const entityOverrides = (binding?.entity_overrides ?? {}) as Record<string, unknown>;
+    const biomeOverrides = (binding?.biome_overrides ?? {}) as Record<string, unknown>;
+
+    const rows = (await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type", (q: any) =>
+        q.eq("branch_id", branch_id).eq("type", "location"),
+      )
+      .collect()) as Doc<"entities">[];
+
+    const out: Array<{
+      slug: string;
+      name: string;
+      biome: string | null;
+      draft: boolean;
+      map_hint: unknown | null;
+      has_entity_pin: boolean;
+      has_biome_pin: boolean;
+    }> = [];
+    for (const e of rows) {
+      if (e.draft) continue;
+      let payload: any = null;
+      try {
+        const vr = await ctx.db
+          .query("artifact_versions")
+          .withIndex("by_artifact_version", (q: any) =>
+            q.eq("artifact_entity_id", e._id).eq("version", e.current_version),
+          )
+          .first();
+        if (vr) payload = await readJSONBlob<any>(ctx as any, vr.blob_hash);
+      } catch {
+        /* pass */
+      }
+      const biome = typeof payload?.biome === "string" ? payload.biome : null;
+      out.push({
+        slug: e.slug,
+        name: payload?.name ?? e.slug,
+        biome,
+        draft: false,
+        map_hint: e.map_hint ?? null,
+        has_entity_pin: Boolean(entityOverrides[e.slug]),
+        has_biome_pin: biome ? Boolean(biomeOverrides[biome]) : false,
+      });
+    }
+    out.sort((a, b) =>
+      a.biome === b.biome
+        ? a.slug.localeCompare(b.slug)
+        : (a.biome ?? "").localeCompare(b.biome ?? ""),
+    );
+    return {
+      world: { id: world._id, slug: world.slug, name: world.name, style_tag: binding?.style_tag ?? null },
+      locations: out,
+    };
+  },
+});
+
+/** Clear a map_hint (owner-only). */
+export const clearMapHint = mutation({
+  args: { session_token: v.string(), world_slug: v.string(), entity_slug: v.string() },
+  handler: async (ctx, { session_token, world_slug, entity_slug }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world?.current_branch_id) throw new Error("world not found");
+    const { user_id } = await resolveMember(ctx as any, session_token, world._id);
+    if (world.owner_user_id !== user_id) throw new Error("owner-only");
+    const branch_id = world.current_branch_id;
+    const entity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q: any) =>
+        q.eq("branch_id", branch_id).eq("type", "location").eq("slug", entity_slug),
+      )
+      .first();
+    if (!entity) throw new Error("entity not found");
+    await ctx.db.patch(entity._id, { map_hint: undefined });
     return { ok: true };
   },
 });

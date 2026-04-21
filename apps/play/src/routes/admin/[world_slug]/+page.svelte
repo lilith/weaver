@@ -42,6 +42,15 @@
 				</p>
 			</a>
 		</li>
+		<li>
+			<a href="/admin/hints/{slug}" class="story-card admin-card block">
+				<div class="font-display text-xl text-mist-100">image-gen hints</div>
+				<p class="mt-1 text-sm text-mist-400">
+					Per-location descriptor, kind, direction, distance. The tile picker
+					hands these to pixellab when a fresh map tile is needed.
+				</p>
+			</a>
+		</li>
 	</ul>
 
 	<nav class="pt-4 text-sm text-mist-500">

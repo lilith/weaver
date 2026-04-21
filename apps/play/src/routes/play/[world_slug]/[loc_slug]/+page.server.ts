@@ -105,6 +105,21 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		artCurationEnabled = false;
 	}
 
+	// flag.litrpg_stats controls the numeric HP / gold / energy row on the
+	// inventory panel. Default on (backwards-compat for pre-flag worlds);
+	// the cozy-narrative preset turns it off explicitly.
+	let litrpgStatsEnabled = true;
+	try {
+		const resolved = await client.query(api.flags.resolve, {
+			session_token: locals.session_token,
+			flag_key: "flag.litrpg_stats",
+			world_slug: params.world_slug
+		});
+		litrpgStatsEnabled = !!(resolved as { enabled?: boolean })?.enabled;
+	} catch {
+		litrpgStatsEnabled = true;
+	}
+
 	// Era catch-up: if world.active_era has advanced past this
 	// character's personal_era, surface the unseen chronicles so the
 	// play page can render a catch-up panel. Null when caught up.
@@ -148,6 +163,7 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		world_slug: params.world_slug,
 		closed_journey,
 		character_state: (character.state as Record<string, unknown>) ?? {},
+		litrpg_stats_enabled: litrpgStatsEnabled,
 		// Art-curation integration surface. Client uses the reactive
 		// Convex client keyed by session_token + world_slug + entity_id.
 		art_curation: {

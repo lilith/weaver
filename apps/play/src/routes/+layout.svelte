@@ -3,6 +3,7 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { setupConvex } from 'convex-svelte';
 	import { PUBLIC_CONVEX_URL } from '$env/static/public';
+	import { page } from '$app/state';
 
 	let { children, data } = $props();
 
@@ -10,6 +11,17 @@
 	// art-curation wardrobe) that need live subscriptions. SSR loaders
 	// still go through the HTTP client in $lib/convex.
 	setupConvex(PUBLIC_CONVEX_URL);
+
+	// Surface a world-scoped admin link when the user is inside a world
+	// (play, map, or admin routes). Extracts the slug from the path so
+	// the nav doesn't need a per-world layout change. Non-owners who hit
+	// /admin/<slug> get redirected out by that page's server load.
+	const worldSlug = $derived.by(() => {
+		const p = page.url.pathname;
+		const m = /^\/(?:play|map|admin)\/([^/]+)/.exec(p);
+		return m ? m[1] : null;
+	});
+	const isOnAdmin = $derived(worldSlug && page.url.pathname.startsWith('/admin/'));
 </script>
 
 <svelte:head>
@@ -25,6 +37,24 @@
 		<div class="flex items-center gap-4 text-sm">
 			<a href="/worlds" class="text-mist-400 no-underline hover:text-rose-400">worlds</a>
 			<a href="/journal" class="text-mist-400 no-underline hover:text-rose-400">journal</a>
+			{#if worldSlug && !isOnAdmin}
+				<a
+					href={`/admin/${worldSlug}`}
+					class="text-mist-400 no-underline hover:text-rose-400"
+					title="Admin this world"
+				>
+					admin
+				</a>
+			{/if}
+			{#if worldSlug && isOnAdmin}
+				<a
+					href={`/play/${worldSlug}`}
+					class="text-mist-400 no-underline hover:text-rose-400"
+					title="Back to playing"
+				>
+					play
+				</a>
+			{/if}
 			<span class="font-hand text-xl text-candle-300">· {data.user.display_name}</span>
 			<form method="POST" action="/auth/logout">
 				<button class="rounded px-2 py-1 text-sm text-mist-600 hover:text-mist-100">

@@ -14,8 +14,12 @@ export type PresetDef = {
 	name: string;
 	tagline: string;
 	blurb: string;
-	flags: string[]; // flags to enable (world scope). Everything else stays default.
-	suggested_style_tag: string | null; // optional pixel-tile style binding
+	/** Explicit flag-on list. World-scoped flag.set(enabled=true). */
+	flags: string[];
+	/** Explicit flag-off list. Used when a flag's registry default is ON
+	 *  but this preset wants it OFF for its world. World-scoped flag.set(enabled=false). */
+	flags_off?: string[];
+	suggested_style_tag: string | null;
 };
 
 export const PRESETS: PresetDef[] = [
@@ -24,7 +28,7 @@ export const PRESETS: PresetDef[] = [
 		name: "Cozy narrative",
 		tagline: "Soft stakes, rich prose, no combat.",
 		blurb:
-			"Biome moods, streaming prose, predictive prefetch, NPC memory. Characters don't fight; they talk, listen, notice. For readers and bedtime storytellers.",
+			"Biome moods, streaming prose, predictive prefetch, NPC memory. Characters don't fight; they talk, listen, notice. No HP or gold. For readers and bedtime storytellers.",
 		flags: [
 			"flag.biome_rules",
 			"flag.expansion_streaming",
@@ -33,6 +37,7 @@ export const PRESETS: PresetDef[] = [
 			"flag.npc_memory",
 			"flag.graph_map",
 		],
+		flags_off: ["flag.litrpg_stats"],
 		suggested_style_tag: "cozy-watercolor-pixel",
 	},
 	{
@@ -95,6 +100,7 @@ export const CUSTOMIZABLE_FLAGS: Array<{ key: string; label: string; hint: strin
 	{ key: "flag.module_combat", label: "Combat", hint: "HP, attacks, enemies — opt-in, never auto-triggered" },
 	{ key: "flag.eras", label: "Eras", hint: "per-entity × per-era state; world can advance in time" },
 	{ key: "flag.effect_router_v2", label: "Effect router v2", hint: "central dispatcher for give/take/use/narrate" },
+	{ key: "flag.litrpg_stats", label: "LitRPG stats", hint: "show HP / gold / energy numbers on the inventory panel" },
 ];
 
 /** Style-tag options for the pixel tile library binding. None = the
