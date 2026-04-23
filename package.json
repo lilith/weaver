@@ -4,7 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit",
+    "test:convex": "vitest run tests/convex",
+    "check": "pnpm -C apps/play check",
+    "pre-push": "pnpm run test && pnpm run check",
+    "test:loop": "node scripts/test-loop.mjs",
+    "test:loop:all": "node scripts/test-loop.mjs --all",
     "push-convex": "CONVEX_DEPLOYMENT=dev:friendly-chameleon-175 convex dev --once",
     "deploy": "echo \"Error: 'npx convex deploy' targets the unused animated-dodo-350 deployment. Use 'pnpm run push-convex' to push to friendly-chameleon-175 (the one deployment backing theweaver.quest).\" && exit 1"
   },
@@ -23,5 +30,9 @@
     "gray-matter": "^4.0.3",
     "resend": "^6.12.0",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "convex-test": "^0.0.49",
+    "vitest": "^4.1.4"
   }
 }

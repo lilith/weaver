@@ -631,6 +631,87 @@ export default defineSchema({
     .index("by_key", ["flag_key"]),
 
   // ---------------------------------------------------------------
+  // Module overrides — spec/MODULE_AND_CODE_PROPOSALS.md. Per-world
+  // tuning of declared slots on a flow module (combat, dialogue, …).
+  // One row per (world_id, module_name). Monotonic `version` is used
+  // by applyModuleEdit for optimistic concurrency. Flow runtime looks
+  // up this row once per step dispatch and passes `overrides_json`
+  // into ModuleCtx.tune / ModuleCtx.template.
+  module_overrides: defineTable({
+    world_id: v.id("worlds"),
+    module_name: v.string(),
+    overrides_json: v.any(),
+    version: v.number(),
+    updated_by_user_id: v.id("users"),
+    updated_at: v.number(),
+  }).index("by_world_module", ["world_id", "module_name"]),
+
+  // Module proposals — the workflow rows driving the admin UI.
+  // Every suggest writes one row; apply patches status + applied_*.
+  // Never deleted (dismiss moves status to "dismissed" instead) so the
+  // mentorship trail stays intact.
+  module_proposals: defineTable({
+    world_id: v.id("worlds"),
+    module_name: v.string(),
+    feedback_text: v.string(),
+    // JSON snapshot of the overrides_json at suggest time — the UI
+    // diffs against this, and audit readers don't have to reconstruct
+    // history from module_overrides' mutating row.
+    current_overrides_snapshot: v.any(),
+    // Opus's proposed overrides — may be a subset of declared slots.
+    suggested_overrides: v.any(),
+    rationale: v.string(),
+    // module_overrides.version at suggest time.
+    expected_version: v.number(),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("applied"),
+      v.literal("dismissed"),
+    ),
+    // Populated only when status = "applied".
+    applied_at: v.optional(v.number()),
+    applied_version: v.optional(v.number()),
+    applied_by_user_id: v.optional(v.id("users")),
+    author_user_id: v.id("users"),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_world_module_time", ["world_id", "module_name", "created_at"])
+    .index("by_world_status", ["world_id", "status"]),
+
+  // ---------------------------------------------------------------
+  // Code-change proposals — spec/MODULE_AND_CODE_PROPOSALS.md. Owner
+  // types feedback → Opus drafts a plan (no code) → owner opens a
+  // GitHub issue assigned to lilith. Keeps "trusted TS only" posture
+  // intact: no runtime code execution, every code change lands via the
+  // normal PR → CI → merge → Pages-deploy path.
+  code_proposals: defineTable({
+    world_id: v.id("worlds"),
+    feedback_text: v.string(),
+    // The Opus-drafted plan: { title, summary, rationale,
+    // suggested_changes: [{file, what}], new_tests: [], open_questions:
+    // [], estimated_size }. Validated at suggest time.
+    plan_json: v.any(),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("opened"),
+      v.literal("closed"),
+      v.literal("dismissed"),
+    ),
+    // Populated when the GitHub issue is created.
+    github_issue_number: v.optional(v.number()),
+    github_issue_url: v.optional(v.string()),
+    github_issue_created_at: v.optional(v.number()),
+    // Populated on dismiss.
+    dismissed_at: v.optional(v.number()),
+    author_user_id: v.id("users"),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_world_status_time", ["world_id", "status", "created_at"])
+    .index("by_world_time", ["world_id", "created_at"]),
+
+  // ---------------------------------------------------------------
   // NPC memory — spec 24 Ask 4. Rows per (npc_entity, world, branch)
   // with salience + event_type + summary + turn count. Compaction job
   // folds low-salience rows into weekly summaries.

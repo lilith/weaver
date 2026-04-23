@@ -18,6 +18,8 @@ export type MentorshipScope =
   | "item.edit"
   | "art.reference_board_add"
   | "art.regen_requested"
+  | `module.apply.${string}`
+  | "code.issue.opened"
   | "other";
 
 export type MentorshipRow = {

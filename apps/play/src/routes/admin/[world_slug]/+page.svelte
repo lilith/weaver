@@ -51,6 +51,25 @@
 				</p>
 			</a>
 		</li>
+		<li>
+			<a href="/admin/modules/{slug}" class="story-card admin-card block">
+				<div class="font-display text-xl text-mist-100">modules · ai feedback</div>
+				<p class="mt-1 text-sm text-mist-400">
+					Tune combat / dialogue / counter behavior by proposing changes to
+					declared slots. No deploy — Opus drafts, you approve, runtime picks
+					it up on the next step.
+				</p>
+			</a>
+		</li>
+		<li>
+			<a href="/admin/code/{slug}" class="story-card admin-card block">
+				<div class="font-display text-xl text-mist-100">code · ai feedback</div>
+				<p class="mt-1 text-sm text-mist-400">
+					For structural changes — new combat choices, new step logic, etc.
+					Opus drafts a plan; you open a GitHub issue for Lilith to implement.
+				</p>
+			</a>
+		</li>
 	</ul>
 
 	<nav class="pt-4 text-sm text-mist-500">

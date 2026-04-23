@@ -304,6 +304,10 @@ async function dispatch() {
       return cmdTheme(rest);
     case "tile":
       return cmdTile(rest);
+    case "modules":
+      return cmdModules(rest);
+    case "code":
+      return cmdCode(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -2223,6 +2227,188 @@ async function cmdTile([sub, ...a]) {
 }
 
 // ---------------------------------------------------------------
+// Module proposals (spec/MODULE_AND_CODE_PROPOSALS.md)
+
+async function cmdModules(args) {
+  needSession();
+  const world = currentWorld();
+  const sub = args[0] ?? "list";
+  const client = getClient();
+  if (sub === "list") {
+    const r = await client.query(ref("module_proposals.listModules"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+    });
+    if (flags.json) return out(r);
+    for (const m of r.modules) {
+      const n = Object.keys(m.slots).length;
+      console.log(
+        `  ${m.name.padEnd(12)} v${m.version}  ${n} slot${n === 1 ? "" : "s"}`,
+      );
+    }
+  } else if (sub === "show") {
+    const module_name = args[1];
+    if (!module_name) err("usage: weaver modules show <module>", 2);
+    const r = await client.query(ref("module_proposals.listModules"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+    });
+    const m = r.modules.find((x) => x.name === module_name);
+    if (!m) err(`module not found: ${module_name}`, 2);
+    if (flags.json) return out(m);
+    console.log(`${m.name} · v${m.version}`);
+    for (const [key, slot] of Object.entries(m.slots)) {
+      const current = m.current[key];
+      const val = current !== undefined ? current : slot.default;
+      console.log(`\n  ${key} (${slot.kind})`);
+      console.log(`    ${slot.description}`);
+      console.log(`    value: ${JSON.stringify(val)}`);
+      if (current !== undefined)
+        console.log(`    default: ${JSON.stringify(slot.default)}`);
+    }
+  } else if (sub === "propose") {
+    const module_name = args[1];
+    const feedback = args.slice(2).join(" ").trim();
+    if (!module_name || !feedback)
+      err('usage: weaver modules propose <module> "<feedback>"', 2);
+    const r = await client.action(ref("module_proposals.suggestModuleEdit"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      module_name,
+      feedback,
+    });
+    if (flags.json) return out(r);
+    console.log(`proposal_id: ${r.proposal_id}`);
+    console.log(`rationale: ${r.rationale}`);
+    const changed = Object.keys(r.suggested_overrides);
+    if (changed.length === 0) console.log("(no slots changed)");
+    for (const key of changed) {
+      const before = r.current_overrides[key] ?? r.slots[key]?.default;
+      const after = r.suggested_overrides[key];
+      console.log(
+        `  ${key}: ${JSON.stringify(before)} → ${JSON.stringify(after)}`,
+      );
+    }
+    console.log(
+      `\napply:   weaver modules apply ${r.proposal_id}\ndismiss: weaver modules dismiss ${r.proposal_id}`,
+    );
+  } else if (sub === "apply") {
+    const proposal_id = args[1];
+    if (!proposal_id) err("usage: weaver modules apply <proposal_id>", 2);
+    const r = await client.mutation(ref("module_proposals.applyModuleEdit"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      proposal_id,
+    });
+    out(r, () => console.log(`applied ${r.module_name} → v${r.version}`));
+  } else if (sub === "dismiss") {
+    const proposal_id = args[1];
+    if (!proposal_id) err("usage: weaver modules dismiss <proposal_id>", 2);
+    const r = await client.mutation(
+      ref("module_proposals.dismissModuleProposal"),
+      {
+        session_token: cfg.session_token,
+        world_slug: world.slug,
+        proposal_id,
+      },
+    );
+    out(r, () => console.log("dismissed"));
+  } else if (sub === "proposals") {
+    const r = await client.query(ref("module_proposals.listProposals"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      limit: Number(flags.limit ?? 30),
+    });
+    if (flags.json) return out(r);
+    for (const p of r) {
+      const dt = new Date(p.created_at).toISOString().slice(0, 16);
+      const av = p.applied_version ? ` → v${p.applied_version}` : "";
+      console.log(`  ${dt} ${p.module_name.padEnd(10)} ${p.status}${av}`);
+      console.log(`    ${p.feedback_text}`);
+    }
+  } else {
+    err(
+      "usage: weaver modules [list|show <mod>|propose <mod> \"fb\"|apply <id>|dismiss <id>|proposals]",
+      2,
+    );
+  }
+}
+
+// ---------------------------------------------------------------
+// Code proposals (spec/MODULE_AND_CODE_PROPOSALS.md)
+
+async function cmdCode(args) {
+  needSession();
+  const world = currentWorld();
+  const sub = args[0] ?? "list";
+  const client = getClient();
+  if (sub === "list" || sub === "proposals") {
+    const r = await client.query(ref("code_proposals.listProposals"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      limit: Number(flags.limit ?? 30),
+    });
+    if (flags.json) return out(r);
+    for (const p of r) {
+      const dt = new Date(p.created_at).toISOString().slice(0, 16);
+      const issue = p.github_issue_number ? ` #${p.github_issue_number}` : "";
+      console.log(`  ${dt} ${p.status}${issue}`);
+      if (p.plan_json?.title) console.log(`    ${p.plan_json.title}`);
+      console.log(`    ${p.feedback_text}`);
+    }
+  } else if (sub === "propose") {
+    const feedback = args.slice(1).join(" ").trim();
+    if (!feedback) err('usage: weaver code propose "<feedback>"', 2);
+    const r = await client.action(ref("code_proposals.suggestCodeChange"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      feedback,
+    });
+    if (flags.json) return out(r);
+    console.log(`proposal_id: ${r.proposal_id}`);
+    console.log(`title: ${r.plan.title}`);
+    console.log(`size: ${r.plan.estimated_size}`);
+    console.log(`summary: ${r.plan.summary}`);
+    if (r.plan.suggested_changes?.length > 0) {
+      console.log("files:");
+      for (const c of r.plan.suggested_changes) {
+        console.log(`  ${c.file} — ${c.what}`);
+      }
+    }
+    console.log(`\nopen:    weaver code open ${r.proposal_id}`);
+    console.log(`dismiss: weaver code dismiss ${r.proposal_id}`);
+  } else if (sub === "open") {
+    const proposal_id = args[1];
+    if (!proposal_id) err("usage: weaver code open <proposal_id>", 2);
+    const r = await client.action(ref("code_proposals.openCodeIssue"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      proposal_id,
+    });
+    out(r, () =>
+      console.log(`opened issue #${r.github_issue_number}\n${r.github_issue_url}`),
+    );
+  } else if (sub === "dismiss") {
+    const proposal_id = args[1];
+    if (!proposal_id) err("usage: weaver code dismiss <proposal_id>", 2);
+    const r = await client.mutation(
+      ref("code_proposals.dismissCodeProposal"),
+      {
+        session_token: cfg.session_token,
+        world_slug: world.slug,
+        proposal_id,
+      },
+    );
+    out(r, () => console.log("dismissed"));
+  } else {
+    err(
+      'usage: weaver code [list|propose "fb"|open <id>|dismiss <id>]',
+      2,
+    );
+  }
+}
+
+// ---------------------------------------------------------------
 // Usage
 
 function usage(topic) {
@@ -2242,6 +2428,9 @@ fix:         fix <type> <slug> <field> <json> [--reason "..."]    (member-level,
 tile:        tile styles | bind <style_tag> | binding | pick <entity_slug>
              tile backfill [--limit N]  (Haiku picks/describes tiles for every canonical location)
              tile hint <entity_slug> "<descriptor>" [dir] [near|mid|far]
+modules:     modules list | show <mod> | propose <mod> "<feedback>" | apply <id>
+             modules dismiss <id> | proposals   (spec/MODULE_AND_CODE_PROPOSALS.md)
+code:        code list | propose "<feedback>" | open <id> | dismiss <id>
 
 flags:       --json   structured output  --world <slug>  override current  --full  don't truncate
              --type <type>  filter entity list  --limit N  cap results  --url <url>  override convex

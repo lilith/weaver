@@ -124,6 +124,15 @@ FLUX scene arts queued).
 
 **Live at:** https://theweaver.quest. Pages auto-deploys on push to main.
 
+**Wave 2 · module + code proposals (spec/MODULE_AND_CODE_PROPOSALS.md, 2026-04-22):**
+- Admin surface `/admin/modules/<slug>` lets owners prompt Opus to tune declared slots in flow modules (counter/dialogue/combat). Runtime merges per-world overrides at step dispatch; `flag.module_overrides` gates the override-lookup round-trip so worlds that don't opt in stay on the default hot path.
+- Admin surface `/admin/code/<slug>` drafts a structured plan for structural changes and opens a GitHub issue assigned to `lilith`. No runtime code exec — trusted-TS posture preserved. Needs `GITHUB_REPO` + `GITHUB_REPO_PAT` in Convex env (`npx convex env set`).
+- Declared slots use kinds `number` / `string` / `template` / `boolean`. Step handlers read via `ctx.tune(key)` / `ctx.template(key, vars)`; undeclared keys throw loud so typos fail at dispatch time.
+- CLI: `weaver modules list|show|propose|apply|dismiss|proposals` and `weaver code list|propose|open|dismiss`.
+- Tables: `module_overrides` (one row per (world, module); version is optimistic-concurrency key), `module_proposals` (workflow trail, never deleted), `code_proposals` (workflow + github issue linkage).
+
+**Local test loop (spec/MODULE_AND_CODE_PROPOSALS.md §Testing):** `node scripts/test-loop.mjs --all` runs vitest unit + convex-test in-memory integration + svelte-check. Green = safe to `pnpm run push-convex` + `git push`. Playwright is the final network-bound gate (against `friendly-chameleon-175`). NEVER run `npx convex codegen` — it pushes to prod; instead use `pnpm run push-convex` which is equivalent.
+
 **Explicitly deferred** (in FEATURE_REGISTRY, not blocking):
 - Async-sync campaign (spec ASYNC_SYNC_PLAY) — waiting on real multi-player need.
 - Eras v3 — per-era authoring files, era-gated entity visibility, era_version_map runtime consultation.

@@ -47,6 +47,14 @@ export const REGISTRY_DEFAULTS: Record<string, boolean> = {
 	"flag.biome_palette_gen": false,
 	"flag.module_dialogue": false,
 	"flag.module_combat": false,
+	// Module & code proposals — spec/MODULE_AND_CODE_PROPOSALS.md. Admin
+	// UIs at /admin/modules/<slug> and /admin/code/<slug> refuse
+	// suggest+apply unless the respective flag is on for the world.
+	// Runtime override lookup in flows.ts also gates on
+	// flag.module_overrides — when off, modules run against declared
+	// defaults only (no per-step DB read).
+	"flag.module_overrides": false,
+	"flag.code_proposals": false,
 	"flag.graph_map": false,
 	// Stat-row visibility on the inventory panel. Default on for
 	// back-compat (pre-flag worlds); cozy-narrative explicitly off.

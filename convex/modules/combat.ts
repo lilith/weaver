@@ -40,16 +40,6 @@ type CombatState = {
   outcome?: "victory" | "defeat" | "fled";
 };
 
-const DEFAULTS: Omit<CombatState, "enemy_slug"> = {
-  enemy_hp: 10,
-  enemy_max_hp: 10,
-  enemy_attack: 3,
-  player_weapon_attack: 4,
-  round: 1,
-  log: [],
-  escape_dc: 5,
-};
-
 export const combatModule: ModuleDef<CombatState> = {
   name: "combat",
   schema_version: 1,
@@ -59,11 +49,117 @@ export const combatModule: ModuleDef<CombatState> = {
     writes: ["character.state.hp"],
     emits: ["combat_start", "combat_end"],
   },
+  overridable: {
+    default_enemy_hp: {
+      kind: "number",
+      default: 10,
+      min: 1,
+      max: 999,
+      description:
+        "Enemy HP when the caller didn't specify. Raise for tougher encounters.",
+    },
+    default_enemy_attack: {
+      kind: "number",
+      default: 3,
+      min: 0,
+      max: 99,
+      description:
+        "Top of the enemy's per-swing damage roll (damage is 1..this) when unset.",
+    },
+    default_player_weapon_attack: {
+      kind: "number",
+      default: 4,
+      min: 0,
+      max: 99,
+      description:
+        "Top of the player's per-swing damage roll when unset. Raise to make the player hit harder.",
+    },
+    default_escape_dc: {
+      kind: "number",
+      default: 5,
+      min: 1,
+      max: 10,
+      description:
+        "Flee check difficulty: roll 1..10 must be <= this to escape. Higher = easier to flee.",
+    },
+    opening_line: {
+      kind: "template",
+      default: "Combat begins. {{player}} faces {{enemy}}.",
+      placeholders: ["player", "enemy"],
+      description: "Shown when combat opens.",
+    },
+    round_header: {
+      kind: "template",
+      default:
+        "Round {{round}}. {{enemy}} has {{enemy_hp}}/{{enemy_max_hp}} hp.",
+      placeholders: ["round", "enemy", "enemy_hp", "enemy_max_hp"],
+      description: "First line of each player turn.",
+    },
+    player_hp_line: {
+      kind: "template",
+      default: "You have {{hp}} hp.",
+      placeholders: ["hp"],
+      description: "Second line of each player turn.",
+    },
+    attack_line: {
+      kind: "template",
+      default:
+        "{{player}} strikes for {{dmg}} — {{enemy}}: {{enemy_hp}}/{{enemy_max_hp}}",
+      placeholders: ["player", "dmg", "enemy", "enemy_hp", "enemy_max_hp"],
+      description: "Shown after a player attack.",
+    },
+    victory_line: {
+      kind: "template",
+      default: "{{enemy}} falls.",
+      placeholders: ["enemy"],
+      description: "Shown when the enemy drops to 0 hp.",
+    },
+    flee_success_line: {
+      kind: "template",
+      default:
+        "You roll {{roll}} vs DC {{dc}}. You break away and run.",
+      placeholders: ["roll", "dc"],
+      description: "Shown when a flee attempt succeeds.",
+    },
+    flee_fail_line: {
+      kind: "template",
+      default:
+        "You roll {{roll}} vs DC {{dc}}. You stumble. The enemy presses.",
+      placeholders: ["roll", "dc"],
+      description: "Shown when a flee attempt fails.",
+    },
+    enemy_hit_line: {
+      kind: "template",
+      default: "{{enemy}} hits back for {{dmg}}.",
+      placeholders: ["enemy", "dmg"],
+      description: "Shown on each enemy swing.",
+    },
+    defeat_line: {
+      kind: "string",
+      default: "You fall to the ground.",
+      max_len: 200,
+      description: "Shown when the player drops to 0 hp.",
+    },
+  },
   steps: {
     open: async (ctx, state) => {
-      const merged: CombatState = { ...DEFAULTS, ...(state as Partial<CombatState>) };
+      const defaults: Omit<CombatState, "enemy_slug"> = {
+        enemy_hp: ctx.tune<number>("default_enemy_hp"),
+        enemy_max_hp: ctx.tune<number>("default_enemy_hp"),
+        enemy_attack: ctx.tune<number>("default_enemy_attack"),
+        player_weapon_attack: ctx.tune<number>("default_player_weapon_attack"),
+        round: 1,
+        log: [],
+        escape_dc: ctx.tune<number>("default_escape_dc"),
+      };
+      const merged: CombatState = { ...defaults, ...(state as Partial<CombatState>) };
       const name = merged.enemy_name ?? merged.enemy_slug ?? "the enemy";
-      ctx.say(`Combat begins. ${ctx.character.pseudonym} faces ${name}.`);
+      ctx.say(
+        ctx.template("opening_line", {
+          player: ctx.character.pseudonym,
+          enemy: name,
+        }),
+      );
       return {
         next: "player_turn",
         state: {
@@ -75,13 +171,20 @@ export const combatModule: ModuleDef<CombatState> = {
 
     player_turn: async (ctx, state, input) => {
       const s = state as CombatState;
+      const enemyName = s.enemy_name ?? s.enemy_slug ?? "the enemy";
       if (!input) {
-        // First entry — show the menu.
         return {
           next: "player_turn",
           says: [
-            `Round ${s.round}. ${s.enemy_name ?? s.enemy_slug} has ${s.enemy_hp}/${s.enemy_max_hp} hp.`,
-            `You have ${ctx.character.state.hp ?? "?"} hp.`,
+            ctx.template("round_header", {
+              round: s.round,
+              enemy: enemyName,
+              enemy_hp: s.enemy_hp,
+              enemy_max_hp: s.enemy_max_hp,
+            }),
+            ctx.template("player_hp_line", {
+              hp: String(ctx.character.state.hp ?? "?"),
+            }),
           ],
           ui: {
             prompt: `Attack or flee?`,
@@ -100,24 +203,31 @@ export const combatModule: ModuleDef<CombatState> = {
             next: "done",
             state: { ...s, outcome: "fled" },
             says: [
-              `You roll ${roll} vs DC ${s.escape_dc}. You break away and run.`,
+              ctx.template("flee_success_line", { roll, dc: s.escape_dc }),
             ],
           };
         }
+        const fail = ctx.template("flee_fail_line", { roll, dc: s.escape_dc });
         return {
           next: "enemy_turn",
           state: {
             ...s,
             log: [...s.log, `You tried to flee (rolled ${roll}) — no luck.`],
           },
-          says: [`You roll ${roll} vs DC ${s.escape_dc}. You stumble. The enemy presses.`],
+          says: [fail],
         };
       }
 
       // Default: attack.
       const dmg = ctx.rng_int(1, s.player_weapon_attack);
       const newEnemyHp = Math.max(0, s.enemy_hp - dmg);
-      const line = `${ctx.character.pseudonym} strikes for ${dmg} — ${s.enemy_name ?? s.enemy_slug}: ${newEnemyHp}/${s.enemy_max_hp}`;
+      const line = ctx.template("attack_line", {
+        player: ctx.character.pseudonym,
+        dmg,
+        enemy: enemyName,
+        enemy_hp: newEnemyHp,
+        enemy_max_hp: s.enemy_max_hp,
+      });
       if (newEnemyHp <= 0) {
         return {
           next: "done",
@@ -127,7 +237,7 @@ export const combatModule: ModuleDef<CombatState> = {
             outcome: "victory",
             log: [...s.log, line],
           },
-          says: [line, `${s.enemy_name ?? s.enemy_slug} falls.`],
+          says: [line, ctx.template("victory_line", { enemy: enemyName })],
         };
       }
       return {
@@ -139,8 +249,12 @@ export const combatModule: ModuleDef<CombatState> = {
 
     enemy_turn: async (ctx, state) => {
       const s = state as CombatState;
+      const enemyName = s.enemy_name ?? s.enemy_slug ?? "the enemy";
       const dmg = ctx.rng_int(1, s.enemy_attack);
-      const line = `${s.enemy_name ?? s.enemy_slug} hits back for ${dmg}.`;
+      const line = ctx.template("enemy_hit_line", {
+        enemy: enemyName,
+        dmg,
+      });
       const playerHp = Number(ctx.character.state.hp ?? 0);
       const newHp = playerHp - dmg;
       if (newHp <= 0) {
@@ -152,7 +266,7 @@ export const combatModule: ModuleDef<CombatState> = {
             log: [...s.log, line].slice(-5),
             round: s.round + 1,
           },
-          says: [line, `You fall to the ground.`],
+          says: [line, ctx.tune<string>("defeat_line")],
           // Effects propagated via the effect router so character.hp
           // updates in the game state alongside the says.
           effects: [{ kind: "damage", amount: dmg }],

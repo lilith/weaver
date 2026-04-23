@@ -635,4 +635,90 @@ test.describe("Isolation — cross-user", () => {
 		});
 		expect(asA).toBeNull();
 	});
+
+	// ----------------------------------------------------------------
+	// Module + code proposal admin surfaces (spec/MODULE_AND_CODE_PROPOSALS.md)
+
+	test("B cannot listModules on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.module_proposals.listModules, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"module_proposals.listModules"
+		);
+	});
+
+	test("B cannot listProposals on A's world (modules)", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.module_proposals.listProposals, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"module_proposals.listProposals"
+		);
+	});
+
+	test("B cannot suggestModuleEdit on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.action(api.module_proposals.suggestModuleEdit, {
+					session_token: tokenB,
+					world_slug: slug,
+					module_name: "counter",
+					feedback: "try to mess with another family's module"
+				}),
+			"module_proposals.suggestModuleEdit"
+		);
+	});
+
+	test("B cannot listProposals on A's world (code)", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.code_proposals.listProposals, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"code_proposals.listProposals"
+		);
+	});
+
+	test("B cannot suggestCodeChange on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.action(api.code_proposals.suggestCodeChange, {
+					session_token: tokenB,
+					world_slug: slug,
+					feedback: "outsider attempting a code proposal"
+				}),
+			"code_proposals.suggestCodeChange"
+		);
+	});
 });

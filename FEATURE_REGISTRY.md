@@ -66,6 +66,8 @@ Transitions: `designed → implementing → playtesting → shipped` is the happ
 | 31 | admin_ui | **shipped** | `apps/play/src/routes/admin/*` | — | art_curation, eras_and_progression, feature_flags_runtime | build |
 | 32 | ref_image_pipe | **shipped** | `convex/art_curation.ts runGenVariant` | — (folded into art_curation) | art_curation | build |
 | 33 | runtime_bugs_cron | **shipped** | `convex/crons.ts` + `convex/diagnostics.ts gcRuntimeBugs` | — | runtime_diagnostics | build |
+| 34 | module_overrides | **implementing** | `spec/MODULE_AND_CODE_PROPOSALS.md` | `flag.module_overrides` | step_state_machine_flows, feature_flags_runtime | build |
+| 35 | code_proposals | **implementing** | `spec/MODULE_AND_CODE_PROPOSALS.md` | `flag.code_proposals` | admin_ui, feature_flags_runtime | build |
 
 *Table maintenance: each row updated when status changes. Add a row when a new spec lands; never delete — mark `retired` or `pulled` instead.*
 

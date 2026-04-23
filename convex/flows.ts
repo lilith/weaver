@@ -30,6 +30,7 @@ import { anthropicCostUsd } from "./cost.js";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   isTerminal,
+  makeOverrideAccessors,
   makeSeededRng,
   type ModuleCtx,
   type ModuleDef,
@@ -245,6 +246,24 @@ async function runStep(
   const rngSeed = `${flow_id}|${stepId}|${flow.updated_at ?? flow.created_at}`;
   const rng = makeSeededRng(rngSeed);
   const says: string[] = [];
+
+  // Per-world module overrides — only load when the flag is on so we
+  // don't add a DB round-trip per step for worlds that haven't opted
+  // in. When off, ctx.tune / ctx.template fall through to module
+  // defaults via mergeOverrides({}).
+  let overrides: Record<string, unknown> = {};
+  const overridesFlagOn = await isFeatureEnabled(ctx, "flag.module_overrides", {
+    world_id: flow.world_id,
+  });
+  if (overridesFlagOn) {
+    const resolved = await ctx.runQuery(internal.flows.activeOverridesForRun, {
+      world_id: flow.world_id,
+      module_name: mod.name,
+    });
+    overrides = (resolved?.overrides as Record<string, unknown>) ?? {};
+  }
+  const { tune, template } = makeOverrideAccessors(mod, overrides);
+
   const modCtx: ModuleCtx = {
     rng,
     rng_int: (lo, hi) => Math.floor(rng() * (hi - lo + 1)) + lo,
@@ -322,6 +341,8 @@ async function runStep(
     say: (text: string) => {
       says.push(text);
     },
+    tune,
+    template,
   };
 
   const result: StepResult = await (handler as any)(
@@ -430,6 +451,30 @@ export const readFlowForRun = internalQuery({
       character_pseudonym: character?.pseudonym ?? "traveler",
       character_state: character?.state ?? {},
       turn: (branch?.state as any)?.turn ?? 0,
+    };
+  },
+});
+
+/** Look up active module overrides for (world, module). Returns an
+ *  empty object when no row exists. The caller should have already
+ *  checked flag.module_overrides — we don't gate here because this
+ *  helper is also callable from admin flows that need to display the
+ *  current state regardless of whether the flag is live. */
+export const activeOverridesForRun = internalQuery({
+  args: {
+    world_id: v.id("worlds"),
+    module_name: v.string(),
+  },
+  handler: async (ctx, { world_id, module_name }) => {
+    const row = await ctx.db
+      .query("module_overrides")
+      .withIndex("by_world_module", (q: any) =>
+        q.eq("world_id", world_id).eq("module_name", module_name),
+      )
+      .first();
+    return {
+      overrides: (row?.overrides_json as Record<string, unknown>) ?? {},
+      version: row?.version ?? 0,
     };
   },
 });
