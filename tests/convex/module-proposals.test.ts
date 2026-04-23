@@ -332,6 +332,58 @@ describe("module_proposals — apply + isolation", () => {
 	});
 });
 
+describe("flags.listOwnerFlippable — settings surface", () => {
+	test("returns metadata + enabled state for the owner", async () => {
+		const t = convexTest(schema, modules);
+		const { owner_id, world_id } = await seedWorld(t, {
+			slug: "settings-a",
+			owner_email: "settings-a@example.com",
+		});
+		const token = await asSession(t, owner_id as unknown as string);
+
+		const r = await t.query(api.flags.listOwnerFlippable, {
+			session_token: token,
+			world_slug: "settings-a",
+		});
+		expect(r.world_id).toBe(world_id);
+		expect(r.flags.length).toBeGreaterThan(0);
+
+		// seedWorld turns on flag.module_overrides as a world override.
+		const mo = r.flags.find((f: any) => f.key === "flag.module_overrides");
+		expect(mo?.enabled).toBe(true);
+		expect(mo?.world_override).toBe(true);
+
+		// Other flags should still show their registry defaults (off).
+		const eras = r.flags.find((f: any) => f.key === "flag.eras");
+		expect(eras?.enabled).toBe(false);
+		expect(eras?.world_override).toBeNull();
+	});
+
+	test("non-owner member is forbidden (isolation)", async () => {
+		const t = convexTest(schema, modules);
+		const { world_id } = await seedWorld(t, {
+			slug: "settings-b",
+			owner_email: "settings-b@example.com",
+		});
+		const b_id = await seedNonOwner(t, "settings-b-other@example.com");
+		await t.run(async (ctx) => {
+			await ctx.db.insert("world_memberships", {
+				world_id: world_id as any,
+				user_id: b_id as any,
+				role: "family_mod",
+				created_at: Date.now(),
+			});
+		});
+		const tokenB = await asSession(t, b_id);
+		await expect(
+			t.query(api.flags.listOwnerFlippable, {
+				session_token: tokenB,
+				world_slug: "settings-b",
+			}),
+		).rejects.toThrow(/forbidden/);
+	});
+});
+
 describe("code_proposals — dismiss + isolation", () => {
 	test("non-owner cannot dismiss another world's proposal", async () => {
 		const t = convexTest(schema, modules);

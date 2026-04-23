@@ -61,6 +61,120 @@ export const REGISTRY_DEFAULTS: Record<string, boolean> = {
 	"flag.litrpg_stats": true,
 };
 
+/** Flags the world owner can legitimately toggle from the admin UI.
+ *  Grouped for rendering. Foundational flags (flag.expansion,
+ *  flag.journeys, flag.world_clock) are omitted on purpose — they're
+ *  kill-switches only and flipping them off breaks the core loop. The
+ *  admin settings page renders whatever's in this map; add an entry
+ *  to ship a flag to family self-service. */
+export type OwnerFlippableFlag = {
+	key: string;
+	label: string;
+	description: string;
+	group: "game" | "ai" | "admin" | "ui";
+	// When on, what breaks / what needs setup. Surfaced as a small
+	// caveat under the toggle — not a hard block.
+	caveat?: string;
+};
+
+export const OWNER_FLIPPABLE_FLAGS: OwnerFlippableFlag[] = [
+	// Game modules + mechanics
+	{
+		key: "flag.flows",
+		label: "Step-keyed flow runtime",
+		description:
+			"Turn on to let modules (combat, dialogue) actually run. Core of every module-based feature.",
+		group: "game",
+	},
+	{
+		key: "flag.biome_rules",
+		label: "Biome rules",
+		description:
+			"Per-biome time dilation, on-enter hooks, ambient spawn tables.",
+		group: "game",
+	},
+	{
+		key: "flag.item_taxonomy",
+		label: "Item taxonomy + effects",
+		description:
+			"Structured inventory, kind-discriminated items (consumables, tools, orbs), give/take/use/crack effects.",
+		group: "game",
+	},
+	{
+		key: "flag.eras",
+		label: "Eras + chronicles",
+		description:
+			"Active-era counter, Opus-written chronicle on advance, per-character catch-up panel.",
+		group: "game",
+	},
+	{
+		key: "flag.litrpg_stats",
+		label: "Stat row on inventory panel",
+		description:
+			"Numeric HP / stamina / etc. Default on for back-compat; flip off for cozy-narrative worlds.",
+		group: "ui",
+	},
+
+	// AI-assisted surfaces
+	{
+		key: "flag.npc_memory",
+		label: "NPC memory",
+		description:
+			"NPCs remember prior dialogue with each player; auto-injected into narrative prompts.",
+		group: "ai",
+	},
+	{
+		key: "flag.art_curation",
+		label: "Art curation (wardrobe)",
+		description:
+			"Eye-icon reveal, mode picker, reference-board-driven regens. Needs fal.ai key + R2.",
+		group: "ai",
+		caveat: "Uses fal.ai credits per regen.",
+	},
+	{
+		key: "flag.biome_palette_gen",
+		label: "Biome palette auto-gen",
+		description:
+			"Opus generates per-biome color palettes from the world bible.",
+		group: "ai",
+		caveat: "One Opus call per biome on first gen.",
+	},
+	{
+		key: "flag.expansion_streaming",
+		label: "Streaming expansion prose",
+		description:
+			"Live prose chunks as Opus writes new locations — feels alive instead of load-then-jump.",
+		group: "ai",
+		caveat: "Requires streaming-capable client.",
+	},
+	{
+		key: "flag.text_prefetch",
+		label: "Text prefetch",
+		description:
+			"Speculatively expand unresolved options so a click lands instantly.",
+		group: "ai",
+		caveat: "Uses extra Opus tokens on never-clicked options.",
+	},
+
+	// Admin / authoring
+	{
+		key: "flag.module_overrides",
+		label: "Module overrides (admin)",
+		description:
+			"Enables the /admin/modules surface — propose tuning changes to flow modules without a deploy.",
+		group: "admin",
+		caveat: "Uses Opus tokens per suggestion.",
+	},
+	{
+		key: "flag.code_proposals",
+		label: "Code proposals (admin)",
+		description:
+			"Enables the /admin/code surface — draft a plan, open a GitHub issue.",
+		group: "admin",
+		caveat: "Needs GITHUB_REPO_PAT in Convex env before `open issue` works.",
+	},
+];
+
 /** A feature_flags row shape. Matches the Convex schema at
  *  convex/schema.ts `feature_flags`. */
 export type FeatureFlagRow = {

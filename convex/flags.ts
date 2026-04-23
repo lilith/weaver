@@ -6,6 +6,7 @@ import { query, mutation } from "./_generated/server.js";
 import { v } from "convex/values";
 import { resolveSession, resolveMember } from "./sessions.js";
 import {
+  OWNER_FLIPPABLE_FLAGS,
   REGISTRY_DEFAULTS,
   resolveFlag,
   scopeCandidates,
@@ -125,6 +126,90 @@ export const resolve = query({
       },
       default: REGISTRY_DEFAULTS[flag_key] ?? false,
     };
+  },
+});
+
+/** Owner-only: load every owner-flippable flag's state for a world in
+ *  one round-trip. Each row reports the resolved value (what the app
+ *  actually sees) + whether there's a world-scoped override on top of
+ *  the global default. Used by /admin/settings/<slug>. */
+export const listOwnerFlippable = query({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+  },
+  handler: async (ctx, { session_token, world_slug }) => {
+    const { user_id } = await resolveSession(ctx, session_token);
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world not found: ${world_slug}`);
+    if (world.owner_user_id !== user_id)
+      throw new Error("forbidden: admin settings are owner-only");
+    const out: Array<{
+      key: string;
+      label: string;
+      description: string;
+      group: string;
+      caveat: string | null;
+      enabled: boolean;
+      default: boolean;
+      world_override: boolean | null;
+    }> = [];
+    for (const meta of OWNER_FLIPPABLE_FLAGS) {
+      // World-scoped override (what a toggle writes).
+      const worldRow = await ctx.db
+        .query("feature_flags")
+        .withIndex("by_key_scope", (q: any) =>
+          q
+            .eq("flag_key", meta.key)
+            .eq("scope_kind", "world")
+            .eq("scope_id", world._id),
+        )
+        .first();
+      // Global override (set via CLI or older admin path). Falls through
+      // when resolving but we show it for transparency.
+      const globalRow = await ctx.db
+        .query("feature_flags")
+        .withIndex("by_key_scope", (q: any) =>
+          q
+            .eq("flag_key", meta.key)
+            .eq("scope_kind", "global")
+            .eq("scope_id", undefined),
+        )
+        .first();
+      const rows: FeatureFlagRow[] = [];
+      if (worldRow)
+        rows.push({
+          flag_key: worldRow.flag_key,
+          scope_kind: worldRow.scope_kind,
+          scope_id: worldRow.scope_id,
+          enabled: worldRow.enabled,
+        });
+      if (globalRow)
+        rows.push({
+          flag_key: globalRow.flag_key,
+          scope_kind: globalRow.scope_kind,
+          scope_id: globalRow.scope_id,
+          enabled: globalRow.enabled,
+        });
+      const enabled = resolveFlag(meta.key, rows, {
+        world_id: world._id as unknown as string,
+        user_id: user_id as unknown as string,
+      });
+      out.push({
+        key: meta.key,
+        label: meta.label,
+        description: meta.description,
+        group: meta.group,
+        caveat: meta.caveat ?? null,
+        enabled,
+        default: REGISTRY_DEFAULTS[meta.key] ?? false,
+        world_override: worldRow ? worldRow.enabled : null,
+      });
+    }
+    return { world_id: world._id, flags: out };
   },
 });
 

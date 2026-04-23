@@ -20,7 +20,9 @@
 		{#if !data.flag.enabled}
 			<p class="rounded border border-amber-500/50 bg-amber-950/40 p-3 text-sm text-amber-200">
 				⚠ <code>flag.code_proposals</code> is off for this world. Enable it in
-				<a href="/admin/{data.world.slug}" class="underline">admin settings</a>
+				<a href="/admin/settings/{data.world.slug}" class="underline"
+					>admin settings</a
+				>
 				before proposing.
 			</p>
 		{/if}

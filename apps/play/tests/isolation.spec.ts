@@ -721,4 +721,20 @@ test.describe("Isolation — cross-user", () => {
 			"code_proposals.suggestCodeChange"
 		);
 	});
+
+	test("B cannot listOwnerFlippable on A's world (settings)", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.flags.listOwnerFlippable, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"flags.listOwnerFlippable"
+		);
+	});
 });
