@@ -21,6 +21,7 @@ import {
   type Inventory,
   type InventoryEntry,
 } from "@weaver/engine/effects";
+import { CANONICAL_STATS } from "@weaver/engine/stats";
 import { isFeatureEnabled } from "./flags.js";
 import { writeNpcMemory } from "./npc_memory.js";
 import { anthropicCostUsd } from "./cost.js";
@@ -132,7 +133,7 @@ async function applyOneEffect(
       applyNumericMutation(
         exec.state,
         exec.thisScope,
-        "character.hp",
+        `character.${CANONICAL_STATS.HP}`,
         (n) => n + eff.amount,
       );
       exec.says.push(`(heal +${eff.amount})`);
@@ -145,7 +146,7 @@ async function applyOneEffect(
       applyNumericMutation(
         exec.state,
         exec.thisScope,
-        "character.hp",
+        `character.${CANONICAL_STATS.HP}`,
         (n) => n - eff.amount,
       );
       exec.says.push(
@@ -343,8 +344,8 @@ async function applyGiveItem(
   }
   // Allow eff.payload to override (useful for authored loot variants).
   extra = { ...extra, ...(eff.payload ?? {}) };
-  const inv = (exec.state.inventory as Inventory | undefined) ?? {};
-  exec.state.inventory = inventoryAdd(inv, eff.slug, qty, extra);
+  const inv = (exec.state[CANONICAL_STATS.INVENTORY] as Inventory | undefined) ?? {};
+  exec.state[CANONICAL_STATS.INVENTORY] = inventoryAdd(inv, eff.slug, qty, extra);
   exec.says.push(`(+${qty}× ${eff.slug}${extra.kind ? ` [${extra.kind}]` : ""})`);
 }
 
@@ -354,9 +355,9 @@ async function applyTakeItem(
   exec: EffectExecCtx,
 ) {
   const qty = eff.qty ?? 1;
-  const inv = (exec.state.inventory as Inventory | undefined) ?? {};
+  const inv = (exec.state[CANONICAL_STATS.INVENTORY] as Inventory | undefined) ?? {};
   const { inv: next, removed } = inventoryRemove(inv, eff.slug, qty);
-  exec.state.inventory = next;
+  exec.state[CANONICAL_STATS.INVENTORY] = next;
   if (removed > 0) exec.says.push(`(-${removed}× ${eff.slug})`);
 }
 
@@ -365,7 +366,7 @@ async function applyUseItem(
   eff: Extract<Effect, { kind: "use_item" }>,
   exec: EffectExecCtx,
 ) {
-  const inv = (exec.state.inventory as Inventory | undefined) ?? {};
+  const inv = (exec.state[CANONICAL_STATS.INVENTORY] as Inventory | undefined) ?? {};
   const entry = inv[eff.slug];
   if (!entry || (entry.qty ?? 0) <= 0) {
     exec.says.push(`(tried to use ${eff.slug} — not in inventory)`);
@@ -395,9 +396,9 @@ async function applyUseItem(
   const charges = entry.charges ?? payload.consumable?.charges ?? 1;
   if (charges <= 1) {
     const { inv: next } = inventoryRemove(inv, eff.slug, 1);
-    exec.state.inventory = next;
+    exec.state[CANONICAL_STATS.INVENTORY] = next;
   } else {
-    exec.state.inventory = {
+    exec.state[CANONICAL_STATS.INVENTORY] = {
       ...inv,
       [eff.slug]: { ...entry, charges: charges - 1 },
     };
@@ -411,7 +412,7 @@ async function applyCrackOrb(
   eff: Extract<Effect, { kind: "crack_orb" }>,
   exec: EffectExecCtx,
 ) {
-  const inv = (exec.state.inventory as Inventory | undefined) ?? {};
+  const inv = (exec.state[CANONICAL_STATS.INVENTORY] as Inventory | undefined) ?? {};
   const entry = inv[eff.slug];
   if (!entry || (entry.qty ?? 0) <= 0) {
     exec.says.push(`(no ${eff.slug} to crack)`);
@@ -437,7 +438,7 @@ async function applyCrackOrb(
   const onAbsorb = (payload.orb?.on_absorb ?? payload.on_absorb ?? []) as Effect[];
   // Remove orb from inventory first so downstream effects see the new shape.
   const { inv: next } = inventoryRemove(inv, eff.slug, 1);
-  exec.state.inventory = next;
+  exec.state[CANONICAL_STATS.INVENTORY] = next;
   exec.says.push(`(cracked ${eff.slug})`);
   await applyEffects(ctx, onCrack, exec);
   await applyEffects(ctx, onAbsorb, exec);

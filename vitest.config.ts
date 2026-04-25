@@ -35,6 +35,10 @@ export default defineConfig({
 				root,
 				"packages/engine/src/graph-layout/index.ts",
 			),
+			"@weaver/engine/stats": resolve(
+				root,
+				"packages/engine/src/stats/index.ts",
+			),
 			"@weaver/engine/art": resolve(root, "packages/engine/src/art/prompts.ts"),
 		},
 	},

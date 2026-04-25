@@ -25,6 +25,7 @@
 // Done: terminal with summary lines.
 
 import type { ModuleDef } from "@weaver/engine/flows";
+import { CANONICAL_STATS } from "@weaver/engine/stats";
 
 type CombatState = {
   // Optional: caller may describe enemy by slug, name, or both.
@@ -45,8 +46,8 @@ export const combatModule: ModuleDef<CombatState> = {
   schema_version: 1,
   entry: "open",
   manifest: {
-    reads: ["entity:npc", "character.state.hp"],
-    writes: ["character.state.hp"],
+    reads: ["entity:npc", `character.state.${CANONICAL_STATS.HP}`],
+    writes: [`character.state.${CANONICAL_STATS.HP}`],
     emits: ["combat_start", "combat_end"],
   },
   overridable: {
@@ -183,7 +184,7 @@ export const combatModule: ModuleDef<CombatState> = {
               enemy_max_hp: s.enemy_max_hp,
             }),
             ctx.template("player_hp_line", {
-              hp: String(ctx.character.state.hp ?? "?"),
+              hp: String(ctx.character.state[CANONICAL_STATS.HP] ?? "?"),
             }),
           ],
           ui: {
@@ -255,7 +256,7 @@ export const combatModule: ModuleDef<CombatState> = {
         enemy: enemyName,
         dmg,
       });
-      const playerHp = Number(ctx.character.state.hp ?? 0);
+      const playerHp = Number(ctx.character.state[CANONICAL_STATS.HP] ?? 0);
       const newHp = playerHp - dmg;
       if (newHp <= 0) {
         return {
