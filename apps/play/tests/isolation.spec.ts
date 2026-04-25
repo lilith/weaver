@@ -755,6 +755,56 @@ test.describe("Isolation — cross-user", () => {
 		);
 	});
 
+	test("B cannot getStatSchema on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.stats.getStatSchema, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"stats.getStatSchema"
+		);
+	});
+
+	test("B cannot applyStatSchema on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.stats.applyStatSchema, {
+					session_token: tokenB,
+					world_slug: slug,
+					schema_json: JSON.stringify({ canonical: { hp: { label: "x" } } })
+				}),
+			"stats.applyStatSchema"
+		);
+	});
+
+	test("B cannot suggestStatSchema on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.action(api.stats.suggestStatSchema, {
+					session_token: tokenB,
+					world_slug: slug,
+					feedback: "outsider attempting a schema rewrite"
+				}),
+			"stats.suggestStatSchema"
+		);
+	});
+
 	test("B cannot listOwnerFlippable on A's world (settings)", async () => {
 		const client = new ConvexHttpClient(CONVEX_URL);
 		const aWorlds = await client.query(api.worlds.listMine, {

@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import SceneArt from '$lib/art/SceneArt.svelte';
 	import StreamingPanel from '$lib/expansion/StreamingPanel.svelte';
+	import { buildStatTiles, formatStatValue, type StatSchema } from '@weaver/engine/stats';
 	let { data, form } = $props();
 	let expanding = $state(false);
 	// Per-option pick in flight — the original_index of the option
@@ -329,10 +330,18 @@
 		</form>
 	</section>
 
-	{@render inventoryPanel(data.character_state, data.litrpg_stats_enabled ?? true)}
+	{@render inventoryPanel(
+		data.character_state,
+		data.litrpg_stats_enabled ?? true,
+		data.stat_schema ?? null
+	)}
 </article>
 
-{#snippet inventoryPanel(state: Record<string, unknown>, showStats: boolean)}
+{#snippet inventoryPanel(
+	state: Record<string, unknown>,
+	showStats: boolean,
+	schema: StatSchema | null
+)}
 	{@const inv = state?.inventory as any}
 	{@const entries =
 		inv && typeof inv === 'object' && !Array.isArray(inv)
@@ -340,41 +349,73 @@
 			: Array.isArray(inv) && inv.length > 0
 				? inv.map((i: any, ix: number) => [typeof i === 'string' ? i : (i?.slug ?? `item-${ix}`), typeof i === 'string' ? { qty: 1 } : i])
 				: []}
-	{@const hp = showStats ? (state?.hp as number | undefined) : undefined}
-	{@const gold = showStats ? (state?.gold as number | undefined) : undefined}
-	{@const energy = showStats ? (state?.energy as number | undefined) : undefined}
-	{#if entries.length > 0 || typeof hp === 'number' || typeof gold === 'number' || typeof energy === 'number'}
+	{@const tiles = showStats
+		? buildStatTiles(state, schema ?? undefined)
+		: []}
+	{@const inventoryHidden =
+		schema?.canonical?.inventory?.hidden === true}
+	{@const inventoryLabel = schema?.inventory_label ?? 'what you carry'}
+	{#if (entries.length > 0 && !inventoryHidden) || tiles.length > 0}
 		<section class="story-card mt-4 space-y-3 px-4 py-3">
 			<div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-				<span class="font-hand text-candle-300">what you carry</span>
-				{#if typeof hp === 'number'}
-					<span class="text-mist-300">hp <span class="font-mono text-mist-100">{hp}</span></span>
+				{#if entries.length > 0 && !inventoryHidden}
+					<span class="font-hand text-candle-300">{inventoryLabel}</span>
 				{/if}
-				{#if typeof gold === 'number'}
-					<span class="text-mist-300">gold <span class="font-mono text-mist-100">{gold}</span></span>
-				{/if}
-				{#if typeof energy === 'number'}
-					<span class="text-mist-300">energy <span class="font-mono text-mist-100">{energy}</span></span>
-				{/if}
+				{#each tiles as t (t.kind + ':' + t.key)}
+					{@const value = formatStatValue(
+						typeof t.value === 'number' ? t.value : Number(t.value),
+						t.display
+					)}
+					<span class="text-mist-300">
+						{#if t.display.icon}
+							<span aria-hidden="true">{t.display.icon}</span>
+						{/if}
+						<span>{t.display.label ?? t.key}</span>
+						<span
+							class="font-mono"
+							style:color={t.display.color
+								? `var(--color-${t.display.color}, var(--color-mist-100))`
+								: undefined}
+						>
+							{value}
+						</span>
+					</span>
+				{/each}
 			</div>
-			{#if entries.length > 0}
+			{#if entries.length > 0 && !inventoryHidden}
 				<ul class="flex flex-wrap gap-2">
 					{#each entries as [slug, entry] (slug)}
-						<li
-							class="inline-flex items-center gap-2 rounded border border-mist-800/60 bg-velvet-800/50 px-2.5 py-1 text-sm"
-							title={(entry as any)?.kind ? `${slug} (${(entry as any).kind})` : String(slug)}
-						>
-							<span class="font-display text-mist-100">{slug}</span>
-							{#if ((entry as any)?.qty ?? 1) > 1}
-								<span class="font-mono text-xs text-mist-400">×{(entry as any).qty}</span>
-							{/if}
-							{#if (entry as any)?.kind}
-								<span class="font-hand text-xs text-teal-400">{(entry as any).kind}</span>
-							{/if}
-						</li>
+						{@const kind = (entry as any)?.kind as string | undefined}
+						{@const kindCfg = kind ? schema?.item_kinds?.[kind] : undefined}
+						{#if !kindCfg?.hidden}
+							<li
+								class="inline-flex items-center gap-2 rounded border border-mist-800/60 bg-velvet-800/50 px-2.5 py-1 text-sm"
+								title={kind ? `${slug} (${kindCfg?.label ?? kind})` : String(slug)}
+							>
+								{#if kindCfg?.icon}
+									<span aria-hidden="true">{kindCfg.icon}</span>
+								{/if}
+								<span class="font-display text-mist-100">{slug}</span>
+								{#if ((entry as any)?.qty ?? 1) > 1}
+									<span class="font-mono text-xs text-mist-400">
+										×{(entry as any).qty}
+									</span>
+								{/if}
+								{#if kind}
+									<span
+										class="font-hand text-xs"
+										style:color={kindCfg?.color
+											? `var(--color-${kindCfg.color}, var(--color-teal-400))`
+											: 'var(--color-teal-400)'}
+									>
+										{kindCfg?.label ?? kind}
+									</span>
+								{/if}
+							</li>
+						{/if}
 					{/each}
 				</ul>
-			{:else}
+			{:else if entries.length === 0 && !inventoryHidden}
 				<p class="text-xs text-mist-500">(you carry nothing yet)</p>
 			{/if}
 		</section>

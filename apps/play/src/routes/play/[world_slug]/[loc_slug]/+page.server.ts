@@ -120,6 +120,21 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		litrpgStatsEnabled = true;
 	}
 
+	// Per-world stat schema (spec/STAT_SCHEMA.md). Pure presentation
+	// overlay; the inventory-panel snippet uses it to relabel canonical
+	// stats and surface custom display-only stats. Falls back to engine
+	// defaults when the schema is null.
+	let stat_schema: any = null;
+	try {
+		const r = await client.query(api.stats.getStatSchema, {
+			session_token: locals.session_token,
+			world_slug: params.world_slug,
+		});
+		stat_schema = r?.schema ?? null;
+	} catch {
+		stat_schema = null;
+	}
+
 	// Era catch-up: if world.active_era has advanced past this
 	// character's personal_era, surface the unseen chronicles so the
 	// play page can render a catch-up panel. Null when caught up.
@@ -164,6 +179,7 @@ export const load: PageServerLoad = async ({ params, locals, parent, cookies }) 
 		closed_journey,
 		character_state: (character.state as Record<string, unknown>) ?? {},
 		litrpg_stats_enabled: litrpgStatsEnabled,
+		stat_schema,
 		// Art-curation integration surface. Client uses the reactive
 		// Convex client keyed by session_token + world_slug + entity_id.
 		art_curation: {
