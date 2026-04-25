@@ -631,6 +631,91 @@ export default defineSchema({
     .index("by_key", ["flag_key"]),
 
   // ---------------------------------------------------------------
+  // Atlases — spec/ATLASES_AND_MAPS.md. Per-world creative-layer maps.
+  // Coexist with the auto-graph; never replace it. Each atlas is one
+  // artist's canvas; multiple atlases per world is normal. Owner of
+  // the world gates create+delete; atlas owner gates style + writes.
+  atlases: defineTable({
+    world_id: v.id("worlds"),
+    slug: v.string(), // unique within world
+    name: v.string(),
+    description: v.optional(v.string()),
+    layer_mode: v.union(
+      v.literal("stack"), // smooth vertical scroll between layers
+      v.literal("toggle"), // composable semantic overlays
+      v.literal("solo"), // one layer only; hand-drawn single-image
+    ),
+    style_anchor: v.optional(v.string()),
+    placement_mode: v.union(v.literal("freeform"), v.literal("grid")),
+    grid_cols: v.optional(v.number()),
+    grid_rows: v.optional(v.number()),
+    owner_user_id: v.id("users"),
+    published: v.boolean(),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_world", ["world_id", "created_at"])
+    .index("by_world_slug", ["world_id", "slug"])
+    .index("by_world_owner", ["world_id", "owner_user_id"]),
+
+  // Layers within an atlas. order_index is significant only for
+  // layer_mode = "stack". Kind is a hint for the viewer (what icons +
+  // basemap defaults are appropriate); free-form "other" is fine.
+  map_layers: defineTable({
+    world_id: v.id("worlds"),
+    atlas_id: v.id("atlases"),
+    slug: v.string(), // unique within atlas
+    name: v.string(),
+    kind: v.string(), // physical | spiritual | political | seasonal | dream | caves | peaks | coast | other
+    order_index: v.number(),
+    basemap_blob_hash: v.optional(v.string()),
+    basemap_prompt: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_atlas_order", ["atlas_id", "order_index"])
+    .index("by_atlas_slug", ["atlas_id", "slug"])
+    .index("by_world", ["world_id"]),
+
+  // Placements — landmarks anchored on a layer. entity_id is optional
+  // (decorative landmarks like "Here be dragons" have only
+  // custom_label). visibility decides what the viewer renders:
+  //   icon  — full landmark with art
+  //   line  — unmarked curve linking to connection_to (a fork, no node)
+  //   hidden — omitted from view; kept in author tooling
+  map_placements: defineTable({
+    world_id: v.id("worlds"),
+    atlas_id: v.id("atlases"),
+    layer_id: v.id("map_layers"),
+    entity_id: v.optional(v.id("entities")),
+    custom_label: v.optional(v.string()),
+    // Freeform coords in [0..1] so basemap resizes don't move pins.
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    // Grid-mode coords; only meaningful when atlas.placement_mode = grid.
+    grid_col: v.optional(v.number()),
+    grid_row: v.optional(v.number()),
+    visibility: v.union(
+      v.literal("icon"),
+      v.literal("line"),
+      v.literal("hidden"),
+    ),
+    icon_blob_hash: v.optional(v.string()),
+    icon_prompt: v.optional(v.string()),
+    icon_style: v.optional(v.string()), // sticker | emblem | inkwash | photoreal | flat
+    // For visibility="line": where the curve goes.
+    connection_to_entity_slug: v.optional(v.string()),
+    // For vertical links: clicking jumps to another layer in the atlas.
+    connection_to_layer_slug: v.optional(v.string()),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_layer", ["layer_id"])
+    .index("by_atlas_entity", ["atlas_id", "entity_id"])
+    .index("by_world", ["world_id"]),
+
+  // ---------------------------------------------------------------
   // Module overrides — spec/MODULE_AND_CODE_PROPOSALS.md. Per-world
   // tuning of declared slots on a flow module (combat, dialogue, …).
   // One row per (world_id, module_name). Monotonic `version` is used

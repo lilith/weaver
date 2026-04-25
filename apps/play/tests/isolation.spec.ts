@@ -722,6 +722,39 @@ test.describe("Isolation — cross-user", () => {
 		);
 	});
 
+	test("B cannot listAtlasesForWorld on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.query(api.atlases.listAtlasesForWorld, {
+					session_token: tokenB,
+					world_slug: slug
+				}),
+			"atlases.listAtlasesForWorld"
+		);
+	});
+
+	test("B cannot createAtlas in A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.atlases.createAtlas, {
+					session_token: tokenB,
+					world_slug: slug,
+					name: "outsider's map"
+				}),
+			"atlases.createAtlas"
+		);
+	});
+
 	test("B cannot listOwnerFlippable on A's world (settings)", async () => {
 		const client = new ConvexHttpClient(CONVEX_URL);
 		const aWorlds = await client.query(api.worlds.listMine, {

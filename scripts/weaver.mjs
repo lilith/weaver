@@ -308,6 +308,8 @@ async function dispatch() {
       return cmdModules(rest);
     case "code":
       return cmdCode(rest);
+    case "atlas":
+      return cmdAtlas(rest);
     default:
       err(`unknown command: ${cmd}. run: weaver help`);
   }
@@ -2409,6 +2411,177 @@ async function cmdCode(args) {
 }
 
 // ---------------------------------------------------------------
+// Atlases (spec/ATLASES_AND_MAPS.md)
+
+async function cmdAtlas(args) {
+  needSession();
+  const world = currentWorld();
+  const sub = args[0] ?? "list";
+  const client = getClient();
+  if (sub === "list") {
+    const r = await client.query(ref("atlases.listAtlasesForWorld"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+    });
+    if (flags.json) return out(r);
+    if (r.length === 0) {
+      console.log("(no atlases yet — try: weaver atlas create \"My Map\")");
+      return;
+    }
+    for (const a of r) {
+      const tag = a.published ? "" : " · draft";
+      const mine = a.is_mine ? " (yours)" : "";
+      console.log(`  ${a.slug.padEnd(30)} ${a.layer_mode.padEnd(7)} ${a.name}${mine}${tag}`);
+    }
+  } else if (sub === "create") {
+    const name = args.slice(1).join(" ").trim();
+    if (!name) err('usage: weaver atlas create "<name>" [--layer-mode stack|toggle|solo]', 2);
+    const layer_mode = pickFlag(args, "--layer-mode") ?? "solo";
+    const r = await client.mutation(ref("atlases.createAtlas"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      name,
+      layer_mode,
+    });
+    out(r, () =>
+      console.log(`created atlas: ${r.slug}\n  weaver atlas show ${r.slug}`),
+    );
+  } else if (sub === "show") {
+    const atlas_slug = args[1];
+    if (!atlas_slug) err("usage: weaver atlas show <atlas_slug>", 2);
+    const r = await client.query(ref("atlases.getAtlas"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      atlas_slug,
+    });
+    if (!r) err(`atlas not found: ${atlas_slug}`, 2);
+    if (flags.json) return out(r);
+    const a = r.atlas;
+    console.log(
+      `${a.slug} · ${a.name}${a.published ? "" : " (draft)"} · layer_mode=${a.layer_mode} · placement=${a.placement_mode}`,
+    );
+    if (a.style_anchor) console.log(`  style: ${a.style_anchor}`);
+    for (const layer of r.layers) {
+      const placements = r.placements[String(layer._id)] ?? [];
+      console.log(
+        `  ◯ ${layer.slug} · ${layer.kind} · order ${layer.order_index} · ${placements.length} placement${placements.length === 1 ? "" : "s"}`,
+      );
+      for (const p of placements) {
+        const where =
+          a.placement_mode === "freeform"
+            ? `(${p.x?.toFixed(2)}, ${p.y?.toFixed(2)})`
+            : `[${p.grid_col}, ${p.grid_row}]`;
+        const what = p.custom_label ?? p.entity_id ?? "?";
+        console.log(`    · ${p.visibility.padEnd(6)} ${where}  ${what}`);
+      }
+    }
+  } else if (sub === "publish") {
+    const atlas_slug = args[1];
+    const next = (args[2] ?? "true").toLowerCase() !== "false";
+    if (!atlas_slug)
+      err("usage: weaver atlas publish <atlas_slug> [true|false]", 2);
+    await client.mutation(ref("atlases.renameAtlas"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      atlas_slug,
+      published: next,
+    });
+    console.log(`${atlas_slug} → published=${next}`);
+  } else if (sub === "delete") {
+    const atlas_slug = args[1];
+    if (!atlas_slug) err("usage: weaver atlas delete <atlas_slug> --yes", 2);
+    if (!args.includes("--yes"))
+      err("refusing to delete without --yes", 2);
+    await client.mutation(ref("atlases.deleteAtlas"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      atlas_slug,
+    });
+    console.log(`deleted atlas: ${atlas_slug}`);
+  } else if (sub === "layer") {
+    const verb = args[1];
+    const atlas_slug = args[2];
+    if (!verb || !atlas_slug)
+      err(
+        "usage: weaver atlas layer add <atlas_slug> \"<name>\" [--kind caves|peaks|...]\n       weaver atlas layer delete <atlas_slug> <layer_slug>",
+        2,
+      );
+    if (verb === "add") {
+      const name = args.slice(3).filter((a) => !a.startsWith("--")).join(" ").trim();
+      if (!name) err('layer add: provide a name', 2);
+      const kind = pickFlag(args, "--kind") ?? "other";
+      const r = await client.mutation(ref("atlases.addLayer"), {
+        session_token: cfg.session_token,
+        world_slug: world.slug,
+        atlas_slug,
+        name,
+        kind,
+      });
+      out(r, () => console.log(`added layer: ${r.slug}`));
+    } else if (verb === "delete") {
+      const layer_slug = args[3];
+      if (!layer_slug) err("usage: weaver atlas layer delete <atlas_slug> <layer_slug>", 2);
+      const r = await client.mutation(ref("atlases.deleteLayer"), {
+        session_token: cfg.session_token,
+        world_slug: world.slug,
+        atlas_slug,
+        layer_slug,
+      });
+      out(r, () =>
+        console.log(`deleted layer: ${layer_slug} (${r.placements_removed ?? 0} placements removed)`),
+      );
+    } else {
+      err(`unknown layer verb: ${verb}`, 2);
+    }
+  } else if (sub === "place") {
+    const atlas_slug = args[1];
+    const layer_slug = args[2];
+    if (!atlas_slug || !layer_slug)
+      err(
+        'usage: weaver atlas place <atlas_slug> <layer_slug> --entity <slug> --xy 0.5,0.3 [--label "..."] [--vis icon|line|hidden]',
+        2,
+      );
+    const entity_slug = pickFlag(args, "--entity");
+    const custom_label = pickFlag(args, "--label");
+    const xy = pickFlag(args, "--xy");
+    const vis = pickFlag(args, "--vis") ?? "icon";
+    if (!entity_slug && !custom_label)
+      err("provide --entity <slug> or --label \"...\"", 2);
+    let x, y;
+    if (xy) {
+      const parts = xy.split(",").map((s) => Number(s.trim()));
+      if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)))
+        err("--xy must be 'X,Y' with finite numbers in 0..1", 2);
+      [x, y] = parts;
+    }
+    const r = await client.mutation(ref("atlases.putPlacement"), {
+      session_token: cfg.session_token,
+      world_slug: world.slug,
+      atlas_slug,
+      layer_slug,
+      entity_slug,
+      custom_label,
+      x,
+      y,
+      visibility: vis,
+    });
+    out(r, () => console.log(`placement: ${r.placement_id}`));
+  } else {
+    err(
+      "usage: weaver atlas [list|create \"<name>\"|show <slug>|publish <slug>|delete <slug> --yes|layer add <slug> \"<name>\"|layer delete <slug> <layer>|place <slug> <layer> --entity <slug> --xy x,y]",
+      2,
+    );
+  }
+}
+
+// Read the value following a `--flag` arg in `args`. Returns null if absent.
+function pickFlag(args, name) {
+  const i = args.indexOf(name);
+  if (i === -1) return null;
+  return args[i + 1] ?? null;
+}
+
+// ---------------------------------------------------------------
 // Usage
 
 function usage(topic) {
@@ -2431,6 +2604,12 @@ tile:        tile styles | bind <style_tag> | binding | pick <entity_slug>
 modules:     modules list | show <mod> | propose <mod> "<feedback>" | apply <id>
              modules dismiss <id> | proposals   (spec/MODULE_AND_CODE_PROPOSALS.md)
 code:        code list | propose "<feedback>" | open <id> | dismiss <id>
+atlas:       atlas list | create "<name>" [--layer-mode stack|toggle|solo]
+             atlas show <slug> | atlas publish <slug> [true|false]
+             atlas delete <slug> --yes
+             atlas layer add <slug> "<name>" [--kind caves|peaks|...]
+             atlas layer delete <slug> <layer_slug>
+             atlas place <slug> <layer_slug> --entity <s> --xy 0.5,0.3 [--label "..."] [--vis icon|line|hidden]
 
 flags:       --json   structured output  --world <slug>  override current  --full  don't truncate
              --type <type>  filter entity list  --limit N  cap results  --url <url>  override convex

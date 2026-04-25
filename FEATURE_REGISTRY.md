@@ -68,6 +68,7 @@ Transitions: `designed → implementing → playtesting → shipped` is the happ
 | 33 | runtime_bugs_cron | **shipped** | `convex/crons.ts` + `convex/diagnostics.ts gcRuntimeBugs` | — | runtime_diagnostics | build |
 | 34 | module_overrides | **implementing** | `spec/MODULE_AND_CODE_PROPOSALS.md` | `flag.module_overrides` | step_state_machine_flows, feature_flags_runtime | build |
 | 35 | code_proposals | **implementing** | `spec/MODULE_AND_CODE_PROPOSALS.md` | `flag.code_proposals` | admin_ui, feature_flags_runtime | build |
+| 36 | atlases | **implementing** (foundation slice) | `spec/ATLASES_AND_MAPS.md` | `flag.atlases` | feature_flags_runtime, blob_storage | build |
 
 *Table maintenance: each row updated when status changes. Add a row when a new spec lands; never delete — mark `retired` or `pulled` instead.*
 

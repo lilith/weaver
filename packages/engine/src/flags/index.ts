@@ -55,6 +55,10 @@ export const REGISTRY_DEFAULTS: Record<string, boolean> = {
 	// defaults only (no per-step DB read).
 	"flag.module_overrides": false,
 	"flag.code_proposals": false,
+	// Atlases — spec/ATLASES_AND_MAPS.md. Optional creative-layer maps;
+	// coexist with the auto-graph rather than replacing it. Owner-curated;
+	// each atlas is an independent artistic interpretation.
+	"flag.atlases": false,
 	"flag.graph_map": false,
 	// Stat-row visibility on the inventory panel. Default on for
 	// back-compat (pre-flag worlds); cozy-narrative explicitly off.
@@ -113,6 +117,14 @@ export const OWNER_FLIPPABLE_FLAGS: OwnerFlippableFlag[] = [
 		description:
 			"Numeric HP / stamina / etc. Default on for back-compat; flip off for cozy-narrative worlds.",
 		group: "ui",
+	},
+	{
+		key: "flag.atlases",
+		label: "Atlases (curated maps)",
+		description:
+			"Hand-curated maps as creative artifacts — multiple atlases per world, multiple layers per atlas (caves / surface / dream / political…). Coexists with the auto-graph; never replaces it.",
+		group: "game",
+		caveat: "AI-generated basemaps + icons use fal.ai credits per roll.",
 	},
 
 	// AI-assisted surfaces
