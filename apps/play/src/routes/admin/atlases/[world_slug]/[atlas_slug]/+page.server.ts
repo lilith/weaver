@@ -133,4 +133,75 @@ export const actions: Actions = {
 			return fail(500, { error: (e as Error).message });
 		}
 	},
+
+	suggestIcon: async ({ params, request, locals }) => {
+		if (!locals.session_token) return fail(401, { error: "not signed in" });
+		const form = await request.formData();
+		const placement_id = String(form.get("placement_id") ?? "");
+		if (!placement_id) return fail(400, { error: "placement_id required" });
+		try {
+			const r = await convexServer().action(
+				api.atlas_ai.suggestIconPrompt,
+				{
+					session_token: locals.session_token,
+					world_slug: params.world_slug,
+					atlas_slug: params.atlas_slug,
+					placement_id: placement_id as any,
+				},
+			);
+			return {
+				iconSuggestion: {
+					placement_id,
+					icon_style: r.icon_style,
+					icon_prompt: r.icon_prompt,
+				},
+			};
+		} catch (e) {
+			return fail(500, { error: (e as Error).message });
+		}
+	},
+
+	applyIcon: async ({ params, request, locals }) => {
+		if (!locals.session_token) return fail(401, { error: "not signed in" });
+		const form = await request.formData();
+		const placement_id = String(form.get("placement_id") ?? "");
+		const icon_style = String(form.get("icon_style") ?? "inkwash");
+		const icon_prompt = String(form.get("icon_prompt") ?? "").trim();
+		if (!placement_id || !icon_prompt)
+			return fail(400, { error: "placement_id + icon_prompt required" });
+		try {
+			await convexServer().mutation(api.atlas_ai.applyIconPrompt, {
+				session_token: locals.session_token,
+				world_slug: params.world_slug,
+				atlas_slug: params.atlas_slug,
+				placement_id: placement_id as any,
+				icon_style,
+				icon_prompt,
+			});
+			return { iconApplied: { placement_id } };
+		} catch (e) {
+			return fail(500, { error: (e as Error).message });
+		}
+	},
+
+	regenBasemap: async ({ params, request, locals }) => {
+		if (!locals.session_token) return fail(401, { error: "not signed in" });
+		const form = await request.formData();
+		const layer_slug = String(form.get("layer_slug") ?? "");
+		const extra_prompt =
+			String(form.get("extra_prompt") ?? "").trim() || undefined;
+		if (!layer_slug) return fail(400, { error: "layer_slug required" });
+		try {
+			await convexServer().mutation(api.atlas_ai.regenerateBasemap, {
+				session_token: locals.session_token,
+				world_slug: params.world_slug,
+				atlas_slug: params.atlas_slug,
+				layer_slug,
+				extra_prompt,
+			});
+			return { basemapQueued: { layer_slug } };
+		} catch (e) {
+			return fail(500, { error: (e as Error).message });
+		}
+	},
 };

@@ -1,8 +1,15 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import { env } from '$env/dynamic/public';
 
 	let { data, form } = $props();
+
+	const r2Public = env.PUBLIC_R2_IMAGES_URL ?? '';
+	function blobUrl(hash: string | null | undefined): string | null {
+		if (!hash || !r2Public) return null;
+		return `${r2Public}/blob/${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash}`;
+	}
 
 	type Atlas = (typeof data)['atlas']['atlas'];
 	type Layer = (typeof data)['atlas']['layers'][number];
@@ -358,6 +365,27 @@
 			</div>
 		{/if}
 
+		{#if selectedLayer}
+			<div class="layer-toolbar pt-2 flex items-center gap-2 flex-wrap">
+				<form method="POST" action="?/regenBasemap" use:enhance class="contents">
+					<input type="hidden" name="layer_slug" value={selectedLayer.slug} />
+					<button type="submit" class="storybook-button-soft text-xs">
+						{selectedLayer.basemap_blob_hash
+							? '↻ regenerate basemap'
+							: '✦ generate basemap'}
+					</button>
+				</form>
+				{#if selectedLayer.basemap_blob_hash}
+					<span class="font-hand text-xs text-teal-300">basemap ready</span>
+				{/if}
+				{#if form?.basemapQueued?.layer_slug === selectedLayer.slug}
+					<span class="font-hand text-xs text-candle-300">
+						drawing… (refresh in ~30s)
+					</span>
+				{/if}
+			</div>
+		{/if}
+
 		<div class="atlas-canvas-shell pt-3">
 			<aside class="atlas-rail" data-area="rail">
 				<input
@@ -404,6 +432,10 @@
 				onclick={(e) => selectedLayer && placeAtCanvas(e, selectedLayer.slug)}
 				role="presentation"
 				data-area="canvas"
+				style:background-image={selectedLayer?.basemap_blob_hash
+					? `url(${blobUrl(selectedLayer.basemap_blob_hash)})`
+					: ''}
+				class:has-basemap={!!selectedLayer?.basemap_blob_hash}
 			>
 				{#if !selectedLayer}
 					<p class="atlas-empty">no layer yet — add one above.</p>
@@ -450,32 +482,109 @@
 		</div>
 
 		{#if placedOnLayer.length > 0}
-			<details class="atlas-placements-list">
+			<details class="atlas-placements-list" open>
 				<summary class="font-hand text-sm text-mist-400 cursor-pointer">
 					placements on {selectedLayer?.name} ({placedOnLayer.length})
 				</summary>
-				<ul class="mt-2 space-y-1 text-sm">
+				<ul class="mt-2 space-y-2 text-sm">
 					{#each placedOnLayer as p (p._id)}
-						<li class="flex items-center gap-2">
-							<span class="font-hand text-xs text-mist-500 tabular-nums">
-								({(p.x ?? 0).toFixed(2)}, {(p.y ?? 0).toFixed(2)})
-							</span>
-							<span class="text-mist-300 flex-1 truncate">
-								{p.custom_label ?? entityNameById(p.entity_id) ?? '?'}
-							</span>
-							<form method="POST" action="?/removePin" use:enhance>
-								<input
-									type="hidden"
-									name="placement_id"
-									value={String(p._id)}
-								/>
-								<button
-									type="submit"
-									class="text-xs text-mist-500 hover:text-rose-400"
+						{@const isSuggested =
+							form?.iconSuggestion?.placement_id === String(p._id)}
+						<li class="placement-row">
+							<div class="flex items-center gap-2">
+								<span class="font-hand text-xs text-mist-500 tabular-nums">
+									({(p.x ?? 0).toFixed(2)}, {(p.y ?? 0).toFixed(2)})
+								</span>
+								<span class="text-mist-300 flex-1 truncate">
+									{p.custom_label ?? entityNameById(p.entity_id) ?? '?'}
+								</span>
+								{#if p.icon_style}
+									<span class="font-hand text-xs text-teal-300">
+										{p.icon_style}
+									</span>
+								{/if}
+								<form
+									method="POST"
+									action="?/suggestIcon"
+									use:enhance
+									style="display:inline"
 								>
-									remove
-								</button>
-							</form>
+									<input
+										type="hidden"
+										name="placement_id"
+										value={String(p._id)}
+									/>
+									<button
+										type="submit"
+										class="text-xs text-candle-300 hover:text-candle-200"
+										title="ask Haiku for an icon style + visual prompt"
+									>
+										✦ icon prompt
+									</button>
+								</form>
+								<form method="POST" action="?/removePin" use:enhance>
+									<input
+										type="hidden"
+										name="placement_id"
+										value={String(p._id)}
+									/>
+									<button
+										type="submit"
+										class="text-xs text-mist-500 hover:text-rose-400"
+									>
+										remove
+									</button>
+								</form>
+							</div>
+							{#if p.icon_prompt}
+								<p class="placement-prompt-saved">
+									<span class="font-hand text-xs text-mist-500">prompt:</span>
+									{p.icon_prompt}
+								</p>
+							{/if}
+							{#if isSuggested && form?.iconSuggestion}
+								{@const sug = form.iconSuggestion}
+								<form
+									method="POST"
+									action="?/applyIcon"
+									use:enhance
+									class="placement-suggest-form"
+								>
+									<input
+										type="hidden"
+										name="placement_id"
+										value={String(p._id)}
+									/>
+									<div class="flex gap-2 items-center flex-wrap">
+										<select
+											name="icon_style"
+											class="storybook-input text-xs py-1"
+										>
+											{#each ['inkwash', 'emblem', 'sticker', 'flat', 'photoreal'] as s (s)}
+												<option
+													value={s}
+													selected={s === sug.icon_style}
+												>
+													{s}
+												</option>
+											{/each}
+										</select>
+										<input
+											type="text"
+											name="icon_prompt"
+											value={sug.icon_prompt}
+											class="storybook-input text-xs flex-1 min-w-0 py-1"
+											maxlength="200"
+										/>
+										<button
+											type="submit"
+											class="storybook-button-soft text-xs"
+										>
+											accept
+										</button>
+									</div>
+								</form>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -507,9 +616,17 @@
 				name="published"
 				value={atlas.published ? 'false' : 'true'}
 			/>
-			<button type="submit" class="storybook-button">
-				{atlas.published ? 'unpublish (back to draft)' : '✦ publish atlas'}
-			</button>
+			<div class="flex gap-3 items-center flex-wrap">
+				<button type="submit" class="storybook-button">
+					{atlas.published ? 'unpublish (back to draft)' : '✦ publish atlas'}
+				</button>
+				<a
+					href="/atlas/{data.world.slug}/{atlas.slug}"
+					class="font-hand text-base text-teal-400 hover:text-rose-400"
+				>
+					preview as a viewer →
+				</a>
+			</div>
 			<p class="text-xs text-mist-500">
 				you can flip this any time. publishing doesn't lock anything — keep
 				editing whenever the map asks for it.
@@ -858,5 +975,68 @@
 		padding: 0.4rem 0.5rem;
 		border-radius: 0.5rem;
 		background: rgba(20, 17, 40, 0.4);
+	}
+	.placement-row {
+		padding: 0.35rem 0.4rem;
+		border-radius: 0.4rem;
+	}
+	.placement-row + .placement-row {
+		border-top: 1px solid rgba(159, 140, 210, 0.08);
+	}
+	.placement-prompt-saved {
+		margin-top: 0.2rem;
+		font-family: var(--font-serif);
+		font-size: 0.85rem;
+		color: var(--color-teal-300);
+		opacity: 0.8;
+	}
+	.placement-suggest-form {
+		margin-top: 0.4rem;
+		padding: 0.4rem 0.5rem;
+		border-left: 2px solid var(--color-candle-400);
+		background: rgba(232, 160, 36, 0.06);
+		border-radius: 0 0.4rem 0.4rem 0;
+	}
+
+	/* basemap-aware canvas — once a basemap is set the gradient
+	   wash backs off so the painted image dominates */
+	.atlas-canvas.has-basemap {
+		background-size: cover;
+		background-position: center;
+		background-repeat: no-repeat;
+		border-style: solid;
+		border-color: rgba(232, 160, 36, 0.32);
+	}
+	.atlas-canvas.has-basemap::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(
+			180deg,
+			rgba(12, 10, 24, 0.05),
+			rgba(12, 10, 24, 0.55)
+		);
+		pointer-events: none;
+	}
+
+	/* soft variant of the storybook button — quieter for inline tools */
+	.storybook-button-soft {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 2rem;
+		padding: 0.3rem 0.85rem;
+		font-family: var(--font-display);
+		font-size: 0.9rem;
+		color: var(--color-candle-200);
+		background: rgba(232, 160, 36, 0.12);
+		border: 1px solid rgba(232, 160, 36, 0.36);
+		border-radius: 0.5rem;
+		cursor: pointer;
+		transition: background 140ms ease, border-color 140ms ease;
+	}
+	.storybook-button-soft:hover {
+		background: rgba(232, 160, 36, 0.22);
+		border-color: var(--color-candle-400);
 	}
 </style>

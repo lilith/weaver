@@ -24,7 +24,10 @@
 	const isOnAdmin = $derived(worldSlug && page.url.pathname.startsWith('/admin/'));
 	// Atlas editor needs wide canvas room — break out of the prose max-w
 	// for those routes only. Other admin pages stay 2xl for read-flow.
-	const isWide = $derived(/^\/admin\/atlases\/[^/]+\/[^/]+/.test(page.url.pathname));
+	const isWide = $derived(
+		/^\/admin\/atlases\/[^/]+\/[^/]+/.test(page.url.pathname) ||
+		/^\/atlas\/[^/]+\/[^/]+/.test(page.url.pathname),
+	);
 </script>
 
 <svelte:head>
