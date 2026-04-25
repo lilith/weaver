@@ -42,6 +42,7 @@ import type * as narrative from "../narrative.js";
 import type * as npc_memory from "../npc_memory.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
+import type * as stats from "../stats.js";
 import type * as themes from "../themes.js";
 import type * as tile_library from "../tile_library.js";
 import type * as tile_picker from "../tile_picker.js";
@@ -88,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   npc_memory: typeof npc_memory;
   seed: typeof seed;
   sessions: typeof sessions;
+  stats: typeof stats;
   themes: typeof themes;
   tile_library: typeof tile_library;
   tile_picker: typeof tile_picker;

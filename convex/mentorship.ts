@@ -20,6 +20,7 @@ export type MentorshipScope =
   | "art.regen_requested"
   | `module.apply.${string}`
   | "code.issue.opened"
+  | "stat_schema.apply"
   | "other";
 
 export type MentorshipRow = {

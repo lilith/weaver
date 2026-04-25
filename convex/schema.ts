@@ -39,6 +39,10 @@ export default defineSchema({
     // Eras v1 — optional, defaults to 1 when absent. Incremented by
     // advanceEra; entity visibility gating is deferred to v2.
     active_era: v.optional(v.number()),
+    // Per-world stat schema (spec/STAT_SCHEMA.md). Pure presentation
+    // overlay — never read by modules. Shape matches StatSchema in
+    // packages/engine/src/stats. Absent ⇒ engine defaults apply.
+    stat_schema: v.optional(v.any()),
     created_at: v.number(),
   })
     .index("by_owner", ["owner_user_id"])

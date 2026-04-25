@@ -71,6 +71,16 @@
 			</a>
 		</li>
 		<li>
+			<a href="/admin/stats/{slug}" class="story-card admin-card block">
+				<div class="font-display text-xl text-mist-100">stats · ai feedback</div>
+				<p class="mt-1 text-sm text-mist-400">
+					Choose how stats appear: labels (HP vs. wellbeing), colors, hide/show,
+					custom display-only stats. Engine vocabulary stays fixed; only the
+					skin changes.
+				</p>
+			</a>
+		</li>
+		<li>
 			<a href="/admin/atlases/{slug}" class="story-card admin-card block">
 				<div class="font-display text-xl text-mist-100">atlases · curated maps</div>
 				<p class="mt-1 text-sm text-mist-400">
