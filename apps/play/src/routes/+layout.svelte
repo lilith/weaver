@@ -22,6 +22,9 @@
 		return m ? m[1] : null;
 	});
 	const isOnAdmin = $derived(worldSlug && page.url.pathname.startsWith('/admin/'));
+	// Atlas editor needs wide canvas room — break out of the prose max-w
+	// for those routes only. Other admin pages stay 2xl for read-flow.
+	const isWide = $derived(/^\/admin\/atlases\/[^/]+\/[^/]+/.test(page.url.pathname));
 </script>
 
 <svelte:head>
@@ -64,4 +67,10 @@
 		</div>
 	{/if}
 </header>
-<main class="mx-auto max-w-2xl px-4 pb-16 sm:px-6">{@render children()}</main>
+<main
+	class="mx-auto px-4 pb-16 sm:px-6"
+	class:max-w-2xl={!isWide}
+	class:max-w-6xl={isWide}
+>
+	{@render children()}
+</main>

@@ -71,6 +71,16 @@
 			</a>
 		</li>
 		<li>
+			<a href="/admin/atlases/{slug}" class="story-card admin-card block">
+				<div class="font-display text-xl text-mist-100">atlases · curated maps</div>
+				<p class="mt-1 text-sm text-mist-400">
+					Hand-curated maps as creative artifacts. Multiple atlases per world,
+					multiple layers each (caves under, peaks above, dream alongside).
+					Optional; the auto-graph stays where it was.
+				</p>
+			</a>
+		</li>
+		<li>
 			<a href="/admin/settings/{slug}" class="story-card admin-card block">
 				<div class="font-display text-xl text-mist-100">settings · feature flags</div>
 				<p class="mt-1 text-sm text-mist-400">
