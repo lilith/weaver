@@ -25,6 +25,7 @@ import type * as diagnostics from "../diagnostics.js";
 import type * as effects from "../effects.js";
 import type * as entity_edit from "../entity_edit.js";
 import type * as eras from "../eras.js";
+import type * as event_summaries from "../event_summaries.js";
 import type * as events from "../events.js";
 import type * as expansion from "../expansion.js";
 import type * as flags from "../flags.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   effects: typeof effects;
   entity_edit: typeof entity_edit;
   eras: typeof eras;
+  event_summaries: typeof event_summaries;
   events: typeof events;
   expansion: typeof expansion;
   flags: typeof flags;

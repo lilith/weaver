@@ -1108,7 +1108,9 @@ Rules:
 - DO add to biomes/characters lists when feedback introduces new elements.
 - DON'T rewrite the prose_sample wholesale unless the feedback explicitly asks for tone shift.
 - DON'T change content_rating unless explicitly requested.
-- DON'T invent or remove content_rating, name, or tagline.`;
+- DON'T invent or remove content_rating, name, or tagline.
+- DO maintain voice_samples (an array of 1-3 short in-voice paragraphs that the runtime AI imitates). When feedback is about tone or "the AI sounds like a business doc," draft new samples in the world's voice — short, sensory, grounded; concrete objects, not abstract atmosphere; no closing summary.
+- DO maintain voice_avoid (an array of phrases the runtime should never produce — extends a default ban list with world-specific ones, e.g. "no contemporary brand names" or "no anachronisms").`;
 
 /** Fetch a biome's authored palette from its entity payload (auto-gen'd
  *  or hand-authored). Returns null if the biome has no palette or the

@@ -884,6 +884,60 @@ export default defineSchema({
     .index("by_branch_kind_time", ["branch_id", "kind", "at"]),
 
   // ---------------------------------------------------------------
+  // Event summaries — the compressed-history tier for the prompt
+  // assembler. Two kinds of rows:
+  //
+  //   kind = "rebuild"  — Sonnet 1M reads the entire raw event log
+  //     for (character?, thread?) up to covers_until_turn, plus
+  //     bible + voice_samples, and writes one in-voice memory-book
+  //     entry from scratch. Lossless rebuilds beat rolling Haiku
+  //     summaries-of-summaries for voice fidelity. Triggered on era
+  //     advance, session boundary, or every N turns since the last
+  //     rebuild.
+  //
+  //   kind = "delta"    — Haiku summarizes events between the last
+  //     rebuild and now. Smaller window; written explicitly in voice
+  //     (sensory + emotional, not bullet recall). The assembler
+  //     concatenates the most-recent rebuild + most-recent delta as
+  //     the "summary" tier.
+  //
+  // Append-only — both old rows stay for audit. The assembler picks
+  // the latest of each kind via index.
+  event_summaries: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    // Optional scope. Null character_id ⇒ world-level summary.
+    character_id: v.optional(v.id("characters")),
+    thread_id: v.optional(v.string()),
+    kind: v.union(v.literal("rebuild"), v.literal("delta")),
+    body: v.string(), // the prose summary itself
+    // Through what turn this summary covers. Assembler uses this to
+    // know which raw events are NEWER than the summary (and thus go
+    // in the verbatim tier).
+    covers_until_turn: v.number(),
+    // Which model produced this. Diagnostic + cost accounting.
+    model: v.string(),
+    // For rebuilds, the hash of the source event-id list — lets us
+    // dedupe on retries without scanning bodies.
+    source_signature: v.optional(v.string()),
+    created_at: v.number(),
+  })
+    .index("by_branch_character_thread_kind_time", [
+      "branch_id",
+      "character_id",
+      "thread_id",
+      "kind",
+      "created_at",
+    ])
+    .index("by_branch_character_kind_time", [
+      "branch_id",
+      "character_id",
+      "kind",
+      "created_at",
+    ])
+    .index("by_branch_kind_time", ["branch_id", "kind", "created_at"]),
+
+  // ---------------------------------------------------------------
   // NPC memory — spec 24 Ask 4. Rows per (npc_entity, world, branch)
   // with salience + event_type + summary + turn count. Compaction job
   // folds low-salience rows into weekly summaries.

@@ -91,6 +91,111 @@ export type AssembledPrompt = {
 };
 
 // --------------------------------------------------------------------
+// Voice / style prelude — the anti-business-doc lever.
+//
+// Default bans: phrases that pattern-match AI-summary voice. Specific
+// bans beat abstract "tone descriptors" — "no 'a sense of unease'"
+// works; "be more vivid" doesn't. Worlds extend with their own bans
+// via bible.voice_avoid.
+
+export const DEFAULT_VOICE_BANS: readonly string[] = [
+	"no bullet lists",
+	"no headers",
+	"no markdown",
+	'no "meanwhile"',
+	'no "as you contemplate" or similar self-aware narrator phrasing',
+	'no "a sense of unease" or other AI-summary mood phrases',
+	"no parenthetical exposition (... ) — let the world speak",
+	"no closing summaries",
+	"no second-person therapy-speak (\"you feel...\", \"a part of you...\")",
+] as const;
+
+export const POSITIVE_VOICE_FRAME = `Write as someone who lives in this world. Describe what hands and eyes do, not what feelings exist. Specific objects beat abstract atmosphere. Trust silence — short sentences when the moment calls for it.`;
+
+export type BibleShape = {
+	name?: string;
+	tagline?: string;
+	tone?: { descriptors?: string[]; avoid?: string[] };
+	established_facts?: string[];
+	prose_sample?: string;
+	voice_samples?: string[]; // hand-written in-voice paragraphs
+	voice_avoid?: string[]; // world-specific bans (extends DEFAULT_VOICE_BANS)
+	[k: string]: unknown;
+};
+
+/** Render the world bible as flowing prose for the prompt — strips
+ *  JSON shape so the model doesn't mirror business-document structure
+ *  in its output. Storage stays JSON; this is a presentation
+ *  transformer, like stat_schema.
+ *
+ *  Order: identity sentence → tone sentence → established facts as a
+ *  short paragraph → prose_sample if present (verbatim, the world's
+ *  own voice). Established facts join with "; " into one paragraph
+ *  rather than a list, deliberately. */
+export function renderBibleAsProse(bible: BibleShape | null | undefined): string {
+	if (!bible) return "";
+	const parts: string[] = [];
+	if (bible.name) {
+		const id = bible.tagline
+			? `${bible.name}. ${bible.tagline}.`
+			: `${bible.name}.`;
+		parts.push(id);
+	}
+	const tone = bible.tone;
+	if (tone?.descriptors?.length) {
+		parts.push(`Tone: ${tone.descriptors.join(", ")}.`);
+	}
+	if (bible.established_facts?.length) {
+		parts.push(bible.established_facts.join("; ") + ".");
+	}
+	if (typeof bible.prose_sample === "string" && bible.prose_sample.trim()) {
+		parts.push(bible.prose_sample.trim());
+	}
+	return parts.join("\n\n").trim();
+}
+
+/** Build the style prelude — anti-summary frame + voice samples + the
+ *  world's "avoid" list. Returns one block for the system prompt;
+ *  returns "" when style would just be noise (intent classification,
+ *  icon prompt, schema design — see CALL_SITE_USES_STYLE). */
+export function renderStylePrelude(opts: {
+	voice_samples?: string[];
+	voice_avoid?: string[];
+}): string {
+	const lines: string[] = [];
+	lines.push(POSITIVE_VOICE_FRAME);
+	const bans = [...DEFAULT_VOICE_BANS, ...(opts.voice_avoid ?? [])];
+	if (bans.length > 0) {
+		lines.push("Banned, always:");
+		for (const b of bans) lines.push(`  - ${b}`);
+	}
+	if (opts.voice_samples?.length) {
+		lines.push("Voice samples — write in this register, not summaries of it:");
+		for (const s of opts.voice_samples) {
+			const t = s.trim();
+			if (t.length > 0) lines.push(`  «${t}»`);
+		}
+	}
+	return lines.join("\n");
+}
+
+/** Which call sites benefit from the voice prelude. Intent / icon /
+ *  schema_design are all "give me JSON" tasks where the prelude would
+ *  hurt by suggesting prose output. haiku_summarize gets it because
+ *  the WHOLE point of in-voice compaction is to write in the world's
+ *  register, not extract bullet points. */
+export const CALL_SITE_USES_STYLE: Record<PromptCallSite, boolean> = {
+	narrate: true,
+	dialogue: true,
+	expansion: true,
+	intent: false,
+	icon_prompt: false,
+	schema_design: false,
+	narrate_effect: true,
+	haiku_summarize: true,
+};
+
+// --------------------------------------------------------------------
 // Per-call-site presets
 
 export type PromptCallSite =
@@ -264,6 +369,15 @@ export type AssembleArgs = {
 	// NPC memory excerpt — already-assembled bullet list or paragraph.
 	// Optional; only used when policy.include_npc_memory is true.
 	npc_memory?: string;
+
+	// In-voice paragraphs the model imitates. Pinned (cache-stable)
+	// alongside the bible. The single biggest lever against AI-summary
+	// voice; ignored on intent/icon/schema_design call sites where
+	// prose output would be wrong.
+	voice_samples?: string[];
+
+	// World-specific banned phrases, extending DEFAULT_VOICE_BANS.
+	voice_avoid?: string[];
 };
 
 /** The single seam every AI call goes through. Returns an
@@ -280,8 +394,19 @@ export function assemblePrompt(args: AssembleArgs): AssembledPrompt {
 	const model = MODEL_IDS[tier];
 	const budget = MODEL_INPUT_BUDGET[tier];
 
-	// System text = pinned. Cache it.
-	const systemText = args.pinned.trim();
+	// System text = style prelude + pinned. Both cache-stable so the
+	// first call pays for them and every subsequent call rides the
+	// 5-minute Anthropic prompt cache.
+	const useStyle = CALL_SITE_USES_STYLE[args.call_site];
+	const stylePrelude = useStyle
+		? renderStylePrelude({
+				voice_samples: args.voice_samples,
+				voice_avoid: args.voice_avoid,
+			})
+		: "";
+	const systemText = [stylePrelude, args.pinned.trim()]
+		.filter((s) => s.length > 0)
+		.join("\n\n");
 
 	// User content composed in tiers. Each tier is its own content
 	// block so the cache_control marker lands cleanly.

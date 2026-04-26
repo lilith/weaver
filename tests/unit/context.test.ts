@@ -4,11 +4,15 @@
 import { describe, expect, it } from "vitest";
 import {
 	CALL_SITE_POLICY,
+	DEFAULT_VOICE_BANS,
 	MODEL_IDS,
 	MODEL_INPUT_BUDGET,
+	POSITIVE_VOICE_FRAME,
 	assemblePrompt,
 	estimateTokens,
 	fitVerbatim,
+	renderBibleAsProse,
+	renderStylePrelude,
 	tierFor,
 	type ContextEvent,
 } from "@weaver/engine/context";
@@ -196,6 +200,116 @@ describe("assemblePrompt", () => {
 				call_site: "intent", // Haiku, 160k budget
 			}),
 		).toThrow(/budget/);
+	});
+});
+
+describe("renderBibleAsProse", () => {
+	it("returns empty string for nil/empty", () => {
+		expect(renderBibleAsProse(null)).toBe("");
+		expect(renderBibleAsProse(undefined)).toBe("");
+		expect(renderBibleAsProse({})).toBe("");
+	});
+
+	it("opens with name + tagline as a sentence, not JSON", () => {
+		const out = renderBibleAsProse({
+			name: "Quiet Vale",
+			tagline: "a damp village built on a chalk hillside",
+		});
+		expect(out).toContain("Quiet Vale.");
+		expect(out).toContain("damp village");
+		expect(out).not.toContain("{");
+		expect(out).not.toContain('"name"');
+	});
+
+	it("flattens established_facts into a single paragraph (no bullets)", () => {
+		const out = renderBibleAsProse({
+			name: "Quiet Vale",
+			established_facts: [
+				"the chimes never stop",
+				"people say less than they mean",
+				"fog rolls in at dusk",
+			],
+		});
+		expect(out).toContain("chimes never stop;");
+		expect(out).toContain("less than they mean;");
+		expect(out).not.toMatch(/^- /m);
+	});
+
+	it("appends prose_sample verbatim if present", () => {
+		const out = renderBibleAsProse({
+			name: "x",
+			prose_sample: "She closed the door behind her, slow.",
+		});
+		expect(out).toContain("She closed the door behind her, slow.");
+	});
+});
+
+describe("renderStylePrelude", () => {
+	it("includes the positive voice frame", () => {
+		const r = renderStylePrelude({});
+		expect(r).toContain(POSITIVE_VOICE_FRAME);
+	});
+
+	it("lists the default bans", () => {
+		const r = renderStylePrelude({});
+		for (const b of DEFAULT_VOICE_BANS) {
+			expect(r).toContain(b);
+		}
+	});
+
+	it("appends world-specific avoids without duplicating defaults", () => {
+		const r = renderStylePrelude({
+			voice_avoid: ['no "modern brand names"'],
+		});
+		expect(r).toContain('no "modern brand names"');
+		// Defaults still appear:
+		expect(r).toContain("no bullet lists");
+	});
+
+	it("renders voice samples in guillemet-quoted form to suggest imitation", () => {
+		const r = renderStylePrelude({
+			voice_samples: ["The well was deeper than anyone thought."],
+		});
+		expect(r).toContain("«The well was deeper than anyone thought.»");
+		expect(r).toContain("Voice samples — write in this register");
+	});
+});
+
+describe("assemblePrompt — style prelude wiring", () => {
+	const baseArgs = {
+		pinned: "World: Quiet Vale.",
+		task: "Reply in one sentence.",
+	};
+
+	it("narrative call sites get the style prelude in system text", () => {
+		const r = assemblePrompt({
+			...baseArgs,
+			call_site: "narrate",
+			voice_samples: ["The chimes never stop."],
+		});
+		expect(r.system[0].text).toContain("Banned, always:");
+		expect(r.system[0].text).toContain("«The chimes never stop.»");
+		// Pinned bible is still there too:
+		expect(r.system[0].text).toContain("World: Quiet Vale.");
+	});
+
+	it("classification call sites do NOT get the prelude", () => {
+		const r = assemblePrompt({
+			...baseArgs,
+			call_site: "intent",
+			voice_samples: ["The chimes never stop."],
+		});
+		expect(r.system[0].text).not.toContain("Banned, always");
+		expect(r.system[0].text).not.toContain("«");
+	});
+
+	it("haiku_summarize gets the prelude (compaction must be in-voice)", () => {
+		const r = assemblePrompt({
+			...baseArgs,
+			call_site: "haiku_summarize",
+			voice_samples: ["The chimes never stop."],
+		});
+		expect(r.system[0].text).toContain("«The chimes never stop.»");
 	});
 });
 

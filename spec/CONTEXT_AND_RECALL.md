@@ -91,9 +91,32 @@ Verbatim + task always invalidate per call.
 
 All bounded by `limit` (default 30) + optional `min_salience`.
 
-## Compaction (next slice)
+## Compaction — Sonnet 1M rebuilds + Haiku in-voice deltas
 
-Old events get folded into running summaries by Haiku at quiet moments. Per-thread compaction so timeline-jumping stays coherent. Salience drives priority: `high` events stay verbatim across many compactions; `low` events fold first. The exact cron + summary table shape is the next slice; the v1 assembler tolerates an absent summary just fine.
+The classic rolling-summary trap is that summaries-of-summaries lose voice with every fold. Three rounds of Haiku and the world sounds like a help-desk ticket. The fix is to never roll: at quiet moments (era advance, session boundary, every ~50 turns), Sonnet 4.6 reads **all** raw events for `(character, thread)` plus the bible + voice samples and writes a fresh memory-book entry from scratch. Lossless rebuilds — the source of voice fidelity is always the original events, never a prior summary.
+
+Between rebuilds, Haiku writes a short in-voice **delta** entry covering events since the last rebuild. Cheap, frequent. The assembler reads `(latest_rebuild + latest_delta_after_rebuild)` and feeds both to the prompt as the summary tier.
+
+**Tables + actions:**
+- `event_summaries(world_id, branch_id, character_id?, thread_id?, kind, body, covers_until_turn, model, source_signature?, created_at)`
+- `internal.event_summaries.runRebuild` — Sonnet, infrequent
+- `internal.event_summaries.runDelta` — Haiku, frequent
+- `worlds.triggerRebuild` / `worlds.triggerDelta` — owner-only mutations that schedule the action
+- `event_summaries.latestSummariesFor(character, thread)` — reader the assembler uses
+
+**System prompts** for both rebuild + delta inherit the `renderStylePrelude(...)` block (anti-summary bans + voice samples) so the *summary* itself is in the world's voice — not "Player rescued cat (well)" but "the well was deeper than anyone thought; Mara cried when the cat came back." Haiku-summarize is in `CALL_SITE_USES_STYLE` for the same reason. Compaction errors compound across hundreds of turns; getting the summary tier in-voice is non-negotiable.
+
+**Cost shape.** Sonnet 1M @ $3 in / $15 out × ~50K-token rebuild = ~$0.15 per rebuild. Run every ~50 turns ⇒ ~$3 per 1000 turns of campaign — meaningful but not punishing. Haiku deltas are ~$0.001 each at typical sizes.
+
+## Voice / style — the anti-business-doc layer
+
+`@weaver/engine/context` carries three pieces that fight summary-document drift:
+
+- **`renderBibleAsProse(bible)`** — flattens the JSON bible to a paragraph for the prompt. Storage stays JSON; this is presentation, like `stat_schema`. Established_facts join with `; ` rather than bullets so the model doesn't mirror list shape in its output.
+- **`renderStylePrelude({voice_samples, voice_avoid})`** — emits a positive frame (*"write as someone who lives here, in their voice"*), the `DEFAULT_VOICE_BANS` list (no bullets, no headers, no "meanwhile," no "a sense of unease," no second-person therapy speak), plus any world-specific bans. Voice samples appear in guillemets to suggest *imitation* not *reference*.
+- **`CALL_SITE_USES_STYLE`** — opt-in per call site. Narrative call sites (narrate, dialogue, expansion, narrate_effect) get the prelude. Classification (intent, icon_prompt, schema_design) does not — prose framing would actively hurt JSON output. `haiku_summarize` IS in the prelude set, deliberately: compaction *must* be in-voice or it poisons the summary tier.
+
+`bible.voice_samples` (1-3 in-voice paragraphs) and `bible.voice_avoid` (extra ban list) are first-class bible fields. The bible-editor's Opus prompt is updated to maintain them — when the owner says "the AI sounds like a business doc," Opus can draft new in-voice samples from the world's prose_sample.
 
 ## What's deferred
 
