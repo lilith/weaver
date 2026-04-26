@@ -710,6 +710,57 @@ export const applyOption = mutation({
       }
     }
 
+    // Append-only events log (spec/CONTEXT_AND_RECALL.md). One row
+    // for the option pick itself; another for arrival at a new
+    // canonical location (skip on draft/prefetch hits — those produce
+    // their own narrate events on land). Says are one row each so the
+    // assembler's recent-verbatim slab matches what the player actually
+    // read.
+    const locationEntity = await ctx.db
+      .query("entities")
+      .withIndex("by_branch_type_slug", (q) =>
+        q
+          .eq("branch_id", branch_id)
+          .eq("type", "location")
+          .eq("slug", payload.slug),
+      )
+      .first();
+    if (locationEntity) {
+      await ctx.runMutation(internal.events.writeEvent, {
+        world_id,
+        branch_id,
+        character_id: character._id,
+        location_id: locationEntity._id,
+        kind: "option_pick",
+        body: String(option.label ?? `option ${option_index}`),
+        payload: { option_index, target: option.target ?? null },
+        salience: "medium",
+      });
+    }
+    for (const line of says) {
+      if (typeof line !== "string" || !line.trim()) continue;
+      await ctx.runMutation(internal.events.writeEvent, {
+        world_id,
+        branch_id,
+        character_id: character._id,
+        location_id: locationEntity?._id,
+        kind: "narrate",
+        body: line,
+        salience: "low",
+      });
+    }
+    if (newLocationEntity && newLocationSlug) {
+      await ctx.runMutation(internal.events.writeEvent, {
+        world_id,
+        branch_id,
+        character_id: character._id,
+        location_id: newLocationEntity._id,
+        kind: "location_enter",
+        body: `entered ${newLocationSlug}`,
+        salience: "medium",
+      });
+    }
+
     return {
       says,
       new_location_slug: newLocationSlug,

@@ -336,6 +336,17 @@ async function runStep(
           salience: "medium",
         });
       }
+      // Append-only events log — what the player just read. The
+      // tiered context assembler reads from this for future prompts.
+      await ctx.runMutation(internal.events.writeEvent, {
+        world_id: flow.world_id,
+        branch_id: flow.branch_id,
+        character_id: flow.character_id,
+        npc_entity_id: speaker_entity_id,
+        kind: speaker_entity_id ? "dialogue" : "narrate",
+        body: text,
+        salience: "medium",
+      });
       return text;
     },
     say: (text: string) => {

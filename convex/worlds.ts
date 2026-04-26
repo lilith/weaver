@@ -799,6 +799,38 @@ export const applyBibleEdit = mutation({
 
 const CHRONICLE_MODEL = "claude-opus-4-7";
 
+/** Owner-only: set the world's AI quality preset. Mapped per call
+ *  site by @weaver/engine/context tierFor(). Cheap surface; no Opus
+ *  calls. Pass null to clear and revert to "standard". */
+export const setAiQuality = mutation({
+  args: {
+    session_token: v.string(),
+    world_slug: v.string(),
+    quality: v.union(
+      v.literal("fast"),
+      v.literal("standard"),
+      v.literal("best"),
+      v.null(),
+    ),
+  },
+  handler: async (ctx, { session_token, world_slug, quality }) => {
+    const world = await ctx.db
+      .query("worlds")
+      .withIndex("by_slug", (q) => q.eq("slug", world_slug))
+      .first();
+    if (!world) throw new Error(`world not found: ${world_slug}`);
+    const { user_id } = await resolveMember(ctx, session_token, world._id);
+    if (world.owner_user_id !== user_id)
+      throw new Error("forbidden: ai_quality is owner-only");
+    if (quality === null) {
+      await ctx.db.patch(world._id, { ai_quality: undefined });
+    } else {
+      await ctx.db.patch(world._id, { ai_quality: quality });
+    }
+    return { ok: true, ai_quality: quality };
+  },
+});
+
 /** Move the world from active_era N → N+1. Writes a Chronicle row
  *  describing the transition. Owner-only. Idempotent-safe: calling
  *  twice advances twice. */

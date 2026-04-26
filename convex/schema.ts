@@ -43,6 +43,16 @@ export default defineSchema({
     // overlay — never read by modules. Shape matches StatSchema in
     // packages/engine/src/stats. Absent ⇒ engine defaults apply.
     stat_schema: v.optional(v.any()),
+    // AI quality preset (spec/CONTEXT_AND_RECALL.md). Swaps Haiku /
+    // Sonnet / Opus across narrative call sites. Cheap end-of-flag
+    // setting — every call site's assembler preset reads this.
+    //   "fast"     — Haiku for everything light; Sonnet for narrate
+    //   "standard" — engine defaults (current behavior)
+    //   "best"     — Opus for everything narrative; Haiku/Sonnet for
+    //                trivial classification only
+    ai_quality: v.optional(
+      v.union(v.literal("fast"), v.literal("standard"), v.literal("best")),
+    ),
     created_at: v.number(),
   })
     .index("by_owner", ["owner_user_id"])
@@ -799,6 +809,79 @@ export default defineSchema({
   })
     .index("by_world_status_time", ["world_id", "status", "created_at"])
     .index("by_world_time", ["world_id", "created_at"]),
+
+  // ---------------------------------------------------------------
+  // Events — append-only log of everything narrative-significant.
+  // Spec: spec/CONTEXT_AND_RECALL.md.
+  //
+  // Two truths kept separate: this table is "what happened" (world
+  // truth) AND "what each character witnessed" — for single-player
+  // characters they're the same row; for async-sync (future) we'll
+  // split witnesses[] off. The tiered context assembler reads slabs
+  // from here for every Opus/Sonnet call.
+  //
+  // Each row is sparse: most events touch only 2-3 of the optional
+  // foreign-key columns. The compound indexes below give O(log n)
+  // lookups for the common recall shapes (here / her / this thing /
+  // us together / in this thread) without a single table scan.
+  events: defineTable({
+    world_id: v.id("worlds"),
+    branch_id: v.id("branches"),
+    // Acting character — who triggered / received the event. Null for
+    // ambient world events like era advancement.
+    character_id: v.optional(v.id("characters")),
+    // Location the event occurred at (entity of type "location").
+    location_id: v.optional(v.id("entities")),
+    // NPC referenced in / present at the event.
+    npc_entity_id: v.optional(v.id("entities")),
+    // Item involved in the event (slug, not id — items aren't always
+    // first-class entities).
+    item_slug: v.optional(v.string()),
+    // Timeline-thread id for sims that branch through eras / sessions.
+    // Null = canonical "main" thread.
+    thread_id: v.optional(v.string()),
+    // Discriminator: "narrate" | "dialogue" | "option_pick" |
+    // "expansion" | "give_item" | "take_item" | "use_item" |
+    // "damage" | "heal" | "era_advance" | "world_seed" | etc.
+    kind: v.string(),
+    // The text the player saw — full prose for narrate/dialogue,
+    // short label for option_pick, etc. This is what the assembler
+    // re-feeds into the prompt as "recent verbatim".
+    body: v.string(),
+    // Anything kind-specific (option_index, damage_amount, item.qty…).
+    payload: v.optional(v.any()),
+    // Salience drives compression: low → folded early, high → kept
+    // verbatim across many turns. Defaults to "medium".
+    salience: v.union(
+      v.literal("low"),
+      v.literal("medium"),
+      v.literal("high"),
+    ),
+    // World-clock turn at write time — lets the assembler order events
+    // even if `at` ms-clocks tie or drift across actions.
+    turn: v.number(),
+    at: v.number(),
+    // Forward-compat: vector embedding for semantic recall (v2). Stored
+    // as float[] when present; the assembler uses cosine-sim in the
+    // action when set. Reserved here so we don't need a migration.
+    embedding: v.optional(v.array(v.number())),
+  })
+    .index("by_branch_location_time", ["branch_id", "location_id", "at"])
+    .index("by_branch_npc_time", ["branch_id", "npc_entity_id", "at"])
+    .index("by_branch_item_time", ["branch_id", "item_slug", "at"])
+    .index("by_branch_character_npc_time", [
+      "branch_id",
+      "character_id",
+      "npc_entity_id",
+      "at",
+    ])
+    .index("by_branch_character_thread_time", [
+      "branch_id",
+      "character_id",
+      "thread_id",
+      "at",
+    ])
+    .index("by_branch_kind_time", ["branch_id", "kind", "at"]),
 
   // ---------------------------------------------------------------
   // NPC memory — spec 24 Ask 4. Rows per (npc_entity, world, branch)

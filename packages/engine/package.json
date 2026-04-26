@@ -17,7 +17,8 @@
     "./art": "./src/art/prompts.ts",
     "./diagnostics": "./src/diagnostics/index.ts",
     "./graph-layout": "./src/graph-layout/index.ts",
-    "./stats": "./src/stats/index.ts"
+    "./stats": "./src/stats/index.ts",
+    "./context": "./src/context/index.ts"
   },
   "peerDependencies": {
     "@noble/hashes": "*",

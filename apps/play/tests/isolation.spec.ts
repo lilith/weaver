@@ -755,6 +755,42 @@ test.describe("Isolation — cross-user", () => {
 		);
 	});
 
+	test("B cannot setAiQuality on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		await expectForbidden(
+			() =>
+				client.mutation(api.worlds.setAiQuality, {
+					session_token: tokenB,
+					world_slug: slug,
+					quality: "best"
+				}),
+			"worlds.setAiQuality"
+		);
+	});
+
+	test("B cannot eventsForCharacterThread on A's world", async () => {
+		const client = new ConvexHttpClient(CONVEX_URL);
+		const aWorlds = await client.query(api.worlds.listMine, {
+			session_token: tokenA
+		});
+		const slug = aWorlds.find((w) => w._id === worldId)!.slug;
+		// Need an A-owned character_id for the args; use any id-shaped string
+		// — auth fails before validation, which is what we want to assert.
+		await expectForbidden(
+			() =>
+				client.query(api.events.eventsForCharacterThread, {
+					session_token: tokenB,
+					world_slug: slug,
+					character_id: "kx0000000000000000000000000000" as any
+				}),
+			"events.eventsForCharacterThread"
+		);
+	});
+
 	test("B cannot getStatSchema on A's world", async () => {
 		const client = new ConvexHttpClient(CONVEX_URL);
 		const aWorlds = await client.query(api.worlds.listMine, {
