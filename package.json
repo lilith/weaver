@@ -20,7 +20,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.18.3",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.90.0",
+    "@anthropic-ai/sdk": "^0.91.1",
     "@aws-sdk/client-s3": "^3.1032.0",
     "@fal-ai/client": "^1.9.5",
     "@noble/hashes": "^2.2.0",
